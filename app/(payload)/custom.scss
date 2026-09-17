@@ -1,0 +1,443 @@
+/* ── Admin Scroll Fix ── */
+/* Restores scroll that gets blocked by frontend body styles */
+body,
+html {
+  overflow: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Ensure the main content area is always scrollable */
+.template-default__wrap,
+.render-root,
+main {
+  overflow-y: auto !important;
+  height: auto !important;
+}
+
+/* ── Admin Search Input & Icon Alignment Fix ── */
+.search-bar,
+.search-filter {
+  position: relative;
+
+  > .icon--search,
+  > svg.icon--search,
+  .icon--search,
+  svg.icon--search,
+  > svg {
+    position: absolute !important;
+    left: 14px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    width: 18px !important;
+    height: 18px !important;
+    z-index: 5 !important;
+    pointer-events: none !important;
+    opacity: 0.65;
+    transition: opacity 0.2s ease, color 0.2s ease;
+  }
+
+  &:focus-within {
+    > .icon--search,
+    > svg.icon--search,
+    .icon--search,
+    svg.icon--search,
+    > svg {
+      opacity: 1;
+    }
+  }
+
+  .search-filter__input,
+  input#search-filter-input,
+  input[type='text'],
+  input {
+    padding-left: 44px !important;
+    padding-inline-start: 44px !important;
+    padding-right: 16px !important;
+    padding-inline-end: 16px !important;
+    line-height: 1.5;
+  }
+}
+
+/* Ensure action buttons inside search bar remain intact */
+.search-bar__actions {
+  position: relative;
+  z-index: 6;
+
+  svg {
+    position: static !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
+
+/* ── Admin Checkbox Visibility & Contrast Fix ── */
+.checkbox-input {
+  display: inline-flex;
+  align-items: center;
+
+  .checkbox-input__input {
+    width: 18px !important;
+    height: 18px !important;
+    min-width: 18px !important;
+    min-height: 18px !important;
+    border: 1.5px solid var(--theme-elevation-350) !important;
+    background-color: var(--theme-elevation-150) !important;
+    border-radius: 4px !important;
+    position: relative !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+    cursor: pointer !important;
+    transition: all 0.15s ease-in-out !important;
+
+    /* Transparent native checkbox overlay to reliably handle clicks */
+    input[type='checkbox'] {
+      cursor: pointer !important;
+      z-index: 3 !important;
+      opacity: 0 !important;
+    }
+  }
+
+  /* Hover State */
+  &:hover:not(.checkbox-input--read-only) {
+    .checkbox-input__input {
+      border-color: var(--theme-elevation-550) !important;
+      background-color: var(--theme-elevation-200) !important;
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1) !important;
+    }
+  }
+
+  /* Centered Check Icon */
+  .checkbox-input__icon {
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: 100% !important;
+    pointer-events: none !important;
+
+    svg {
+      width: 14px !important;
+      height: 14px !important;
+    }
+  }
+
+  /* Checked / Selected State */
+  &.checkbox-input--checked,
+  &--checked {
+    .checkbox-input__input {
+      background-color: var(--theme-elevation-850) !important;
+      border-color: var(--theme-elevation-850) !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+    }
+
+    .checkbox-input__icon svg {
+      opacity: 1 !important;
+
+      .stroke {
+        stroke: var(--theme-elevation-0) !important;
+        stroke-width: 2.5px !important;
+      }
+    }
+  }
+
+  /* Partial Checked State (e.g. Header when some rows are selected) */
+  &:has(.checkbox-input__icon.partial) {
+    .checkbox-input__input {
+      background-color: var(--theme-elevation-850) !important;
+      border-color: var(--theme-elevation-850) !important;
+    }
+
+    .checkbox-input__icon.partial svg {
+      opacity: 1 !important;
+
+      .stroke {
+        stroke: var(--theme-elevation-0) !important;
+        stroke-width: 2.5px !important;
+      }
+    }
+  }
+
+  /* Focus outline for accessibility */
+  &:focus-within {
+    .checkbox-input__input {
+      box-shadow: 0 0 0 2px var(--theme-elevation-0), 0 0 0 4px var(--theme-elevation-500) !important;
+    }
+  }
+}
+
+/* Ensure table select cells are neatly aligned */
+.table td.cell-_select,
+.table th.cell-_select {
+  vertical-align: middle !important;
+
+  .select-row,
+  .select-all {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+}
+
+/* ── Admin Popup Menu & Button List Alignment Fix ── */
+.popup-button-list {
+  --list-button-padding: calc(var(--base, 25px) * 0.5);
+
+  .popup-button-list__button,
+  button.popup-button-list__button,
+  a.popup-button-list__button,
+  div.popup-button-list__button {
+    padding-left: var(--list-button-padding, 12px) !important;
+    padding-right: var(--list-button-padding, 12px) !important;
+    padding-top: calc(4px + var(--popup-button-list-gap, 3px) / 2) !important;
+    padding-bottom: calc(4px + var(--popup-button-list-gap, 3px) / 2) !important;
+    display: flex !important;
+    align-items: center !important;
+    text-align: left !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    border-radius: 4px !important;
+    transition: background-color 0.15s ease, color 0.15s ease !important;
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--popup-button-highlight, var(--theme-elevation-150)) !important;
+      outline: none !important;
+    }
+  }
+}
+
+.popup__content {
+  .popup-button-list__button,
+  button.popup-button-list__button,
+  a.popup-button-list__button {
+    padding-left: var(--list-button-padding, 12px) !important;
+    padding-right: var(--list-button-padding, 12px) !important;
+  }
+}
+
+/* ── Admin Button Contrast, Inner Padding & Spacing Fix ── */
+.btn,
+a.btn,
+button.btn {
+  text-decoration: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  border-radius: var(--style-radius-s, 4px) !important;
+  padding: 10px 20px !important;
+  min-height: 40px !important;
+  transition: all 0.15s ease-in-out !important;
+
+  &--size-large,
+  &.btn--size-large {
+    padding: 12px 24px !important;
+    min-height: 46px !important;
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+  }
+
+  &--size-small,
+  &.btn--size-small {
+    padding: 6px 14px !important;
+    min-height: 32px !important;
+    font-size: 0.85rem !important;
+  }
+
+  /* Primary Button (e.g. Login, Create new Media, Save, Publish) */
+  &.btn--style-primary,
+  &--style-primary {
+    background-color: var(--theme-elevation-850) !important;
+    border: 1px solid transparent !important;
+    color: var(--theme-elevation-0) !important;
+
+    .btn__label,
+    .btn__content,
+    span {
+      color: var(--theme-elevation-0) !important;
+      font-weight: 600 !important;
+    }
+
+    .btn__icon {
+      .stroke {
+        stroke: var(--theme-elevation-0) !important;
+      }
+      .fill {
+        fill: var(--theme-elevation-0) !important;
+      }
+    }
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--theme-elevation-700) !important;
+      color: var(--theme-elevation-0) !important;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+
+      .btn__label,
+      .btn__content,
+      span {
+        color: var(--theme-elevation-0) !important;
+      }
+    }
+
+    &:active {
+      transform: translateY(0);
+    }
+  }
+
+  /* Secondary Button (e.g. Cancel, Preview) */
+  &.btn--style-secondary,
+  &--style-secondary {
+    background-color: transparent !important;
+    border: 1px solid var(--theme-elevation-350) !important;
+    color: var(--theme-text) !important;
+
+    .btn__label,
+    .btn__content,
+    span {
+      color: var(--theme-text) !important;
+    }
+
+    &:hover,
+    &:focus-visible {
+      background-color: var(--theme-elevation-100) !important;
+      border-color: var(--theme-elevation-500) !important;
+    }
+  }
+}
+
+/* ── Login Form Spacing & Button Layout ── */
+.login__form {
+  .login__form__inputWrap {
+    margin-bottom: 16px !important;
+  }
+
+  a[href*='forgot'],
+  a {
+    display: inline-block !important;
+    margin-top: 0px !important;
+    margin-bottom: 22px !important;
+    color: var(--theme-elevation-500) !important;
+    font-size: 0.9rem !important;
+    transition: color 0.15s ease !important;
+
+    &:hover {
+      color: var(--theme-elevation-800) !important;
+      text-decoration: underline !important;
+    }
+  }
+
+  .form-submit {
+    margin-top: 22px !important;
+
+    .btn {
+      width: 100% !important;
+      padding: 13px 24px !important;
+      min-height: 48px !important;
+      border-radius: 6px !important;
+      font-size: 1rem !important;
+      font-weight: 600 !important;
+      letter-spacing: 0.02em !important;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+
+      &:hover {
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35) !important;
+      }
+    }
+  }
+}
+
+/* General form submit button top margin */
+form > .form-submit,
+.form-submit {
+  margin-top: 0px !important;
+}
+
+/* Empty State / No Results Action Button */
+.no-results {
+  .no-results__actions {
+    .btn,
+    a.btn,
+    button.btn {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      padding: 10px 22px !important;
+      border-radius: var(--style-radius-s, 4px) !important;
+      font-size: 0.95rem !important;
+
+      .btn__label,
+      span {
+        color: var(--theme-elevation-0) !important;
+        font-weight: 600 !important;
+      }
+    }
+  }
+}
+
+/* ── Form Inputs Global Starting Space & Padding Fix ── */
+/* Fixes Tailwind preflight stripping left/right starting space across all form fields */
+.field-type input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='button']):not([type='submit']):not([type='reset']):not(.search-filter__input):not(#search-filter-input),
+.login__form input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='button']):not([type='submit']):not([type='reset']):not(.search-filter__input):not(#search-filter-input),
+form input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='button']):not([type='submit']):not([type='reset']):not(.search-filter__input):not(#search-filter-input),
+.form-input:not([type='checkbox']):not([type='radio']):not([type='file']):not(.search-filter__input),
+input[type='text']:not(.search-filter__input):not(#search-filter-input),
+input[type='email'],
+input[type='password'],
+input[type='number'],
+input[type='url'],
+input[type='tel'],
+input[type='date'],
+input[type='datetime-local'],
+input[type='time'] {
+  padding-left: 14px !important;
+  padding-inline-start: 14px !important;
+  padding-right: 14px !important;
+  padding-inline-end: 14px !important;
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+  box-sizing: border-box !important;
+  border-radius: var(--style-radius-s, 4px) !important;
+  min-height: 42px !important;
+  font-size: 0.95rem !important;
+  line-height: 1.5 !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+
+  &:focus {
+    outline: none !important;
+    border-color: var(--theme-elevation-400) !important;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12) !important;
+  }
+}
+
+/* Global Textarea Starting Space & Padding */
+textarea,
+.field-type textarea,
+.login__form textarea,
+form textarea {
+  padding-left: 14px !important;
+  padding-inline-start: 14px !important;
+  padding-right: 14px !important;
+  padding-inline-end: 14px !important;
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+  box-sizing: border-box !important;
+  border-radius: var(--style-radius-s, 4px) !important;
+  min-height: 96px !important;
+  font-size: 0.95rem !important;
+  line-height: 1.5 !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+
+  &:focus {
+    outline: none !important;
+    border-color: var(--theme-elevation-400) !important;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12) !important;
+  }
+}

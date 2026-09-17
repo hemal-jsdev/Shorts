@@ -1,5 +1,5 @@
-import { reelsApi } from '../lib/api';
-import { ShortsFeed } from '../components/shorts/ShortsFeed';
+import { reelsApi } from '@/lib/api';
+import { ShortsFeed } from '@/components/shorts/ShortsFeed';
 
 export const dynamic = 'force-dynamic';
 

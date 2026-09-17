@@ -1,6 +1,6 @@
 import { Metadata } from 'next';
-import { reelsApi } from '../../../lib/api';
-import { ShortsFeed } from '../../../components/shorts/ShortsFeed';
+import { reelsApi } from '@/lib/api';
+import { ShortsFeed } from '@/components/shorts/ShortsFeed';
 
 interface Props {
   params: Promise<{ id: string }>;

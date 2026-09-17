@@ -28,7 +28,7 @@ export default buildConfig({
       baseDir: path.resolve(dirname),
     },
     meta: {
-      titleSuffix: '— Insta Shorts CMS',
+      titleSuffix: '— Shorts CMS',
     },
     components: {
       beforeNavLinks: ['@/components/admin/AdminUrlCleaner#default'],

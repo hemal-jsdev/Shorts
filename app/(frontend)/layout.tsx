@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
-import './globals.css';
-import { Navbar } from '../components/layout/Navbar';
+import '../globals.css';
+import { Navbar } from '@/components/layout/Navbar';
 
 export const metadata: Metadata = {
   title: 'YouTube Shorts & Instagram Reels — Cloudflare Stream Player',
   description: 'Ultra-fast, adaptive HLS video streaming shorts player powered by Next.js and Cloudflare Stream.',
 };
 
-export default function RootLayout({
+export default function FrontendLayout({
   children,
 }: {
   children: React.ReactNode;

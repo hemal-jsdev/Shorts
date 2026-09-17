@@ -1,5 +1,4 @@
 import React from 'react';
-import { Navbar } from '@/components/layout/Navbar';
 import { AdminCreatorStudio } from '@/components/admin/AdminCreatorStudio';
 
 export const metadata = {
@@ -9,11 +8,8 @@ export const metadata = {
 
 export default function StudioPage() {
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
-      <Navbar />
-      <main className="flex-1 py-8 px-4 sm:px-6">
-        <AdminCreatorStudio standalone={true} />
-      </main>
+    <div className="w-full h-full overflow-y-auto py-8 px-4 sm:px-6">
+      <AdminCreatorStudio standalone={true} />
     </div>
   );
 }

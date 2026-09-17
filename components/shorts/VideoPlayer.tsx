@@ -179,14 +179,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  // Sync YouTube play/pause without reloading iframe
+  // Sync YouTube play/pause and reset to beginning when navigating between reels
   useEffect(() => {
     if (!youtubeId) return;
 
     if (isActive && isPlaying) {
+      sendYtCommand('seekTo', [0, true]);
       sendYtCommand('playVideo');
     } else {
       sendYtCommand('pauseVideo');
+      sendYtCommand('seekTo', [0, true]);
     }
   }, [isActive, isPlaying, youtubeId]);
 
@@ -278,6 +280,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         handlePlaying();
+        video.currentTime = 0;
         if (isActive && isPlaying) {
           const playPromise = video.play();
           if (playPromise !== undefined) {
@@ -322,6 +325,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       video.src = src;
       video.onloadedmetadata = () => {
         handlePlaying();
+        video.currentTime = 0;
         if (isActive && isPlaying) {
           video.play().catch(() => {
             video.muted = true;
@@ -333,6 +337,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       video.src = src;
       video.onloadedmetadata = () => {
         handlePlaying();
+        video.currentTime = 0;
         if (isActive && isPlaying) {
           video.play().catch(() => {
             video.muted = true;

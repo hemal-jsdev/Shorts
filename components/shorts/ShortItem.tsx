@@ -28,6 +28,20 @@ export const ShortItem: React.FC<ShortItemProps> = ({
   const [duration, setDuration] = useState(reel.durationSeconds || 45);
   const [seekTime, setSeekTime] = useState<number | null>(null);
   const [viewLogged, setViewLogged] = useState(false);
+  const [sessionKey, setSessionKey] = useState(0);
+
+  // Reset video position and give a clean session whenever the user returns to this reel
+  React.useEffect(() => {
+    if (isActive) {
+      setCurrentTime(0);
+      setSeekTime(null);
+      setSessionKey((prev) => prev + 1);
+    } else {
+      setCurrentTime(0);
+      setSeekTime(null);
+      setViewLogged(false);
+    }
+  }, [isActive]);
 
   // Toggle Like handler
   const handleToggleLike = async () => {
@@ -69,6 +83,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
         <div className="relative w-full h-full md:h-[calc(100%-0.75rem)] md:w-auto md:aspect-[9/16] bg-black rounded-none md:rounded-2xl overflow-hidden shadow-2xl border-0 md:border md:border-white/10 ambient-glow flex items-center justify-center">
           {isActive ? (
             <VideoPlayer
+              key={`${reel.id}-${sessionKey}`}
               src={reel.hlsUrl}
               poster={reel.thumbnailUrl || undefined}
               isActive={true}

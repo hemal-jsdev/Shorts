@@ -698,6 +698,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       onPointerCancel={handlePointerUp}
       onPointerLeave={handlePointerUp}
       onClick={handleVideoClick}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
       className="relative w-full h-full cursor-pointer bg-black flex items-center justify-center overflow-hidden select-none"
     >
       {/* YouTube Shorts Clean Embed Player */}
@@ -751,7 +756,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </AnimatePresence>
 
           {/* Transparent full-bleed click shield to capture play/pause clicks */}
-          <div className="absolute inset-0 z-10 cursor-pointer" />
+          <div
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            className="absolute inset-0 z-10 cursor-pointer"
+          />
         </div>
       ) : (
         /* Cloudflare Stream / HLS / HTML5 Video Player */
@@ -762,6 +773,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           loop
           playsInline
           muted={!isActive || isMuted}
+          disablePictureInPicture
+          controlsList="nodownload noplaybackrate nofullscreen"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           onCanPlay={handlePlaying}
           onLoadedData={handlePlaying}
           onWaiting={handleWaiting}
@@ -771,7 +788,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               onTimeUpdate(videoRef.current.currentTime, videoRef.current.duration || 0);
             }
           }}
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover pointer-events-none select-none"
+          style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
         />
       )}
 

@@ -61,3 +61,20 @@ body {
 .ambient-glow {
   box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.8), 0 0 50px -10px rgba(255, 255, 255, 0.05);
 }
+
+/* Modern Mobile Native App Feel: Disable browser video/image long-press context menus */
+video,
+img,
+.short-slide-item,
+.shorts-scroll-container {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  -khtml-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+}
+
+video {
+  pointer-events: none !important;
+}

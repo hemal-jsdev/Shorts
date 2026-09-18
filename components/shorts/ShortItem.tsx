@@ -75,9 +75,15 @@ export const ShortItem: React.FC<ShortItemProps> = ({
   };
 
   return (
-    <div className="short-slide-item w-full h-[calc(100dvh-3.5rem)] flex items-center justify-center relative px-2 py-1 md:py-1.5 snap-start select-none">
+    <div
+      onContextMenu={(e) => e.preventDefault()}
+      className="short-slide-item w-full h-[calc(100dvh-3.5rem)] flex items-center justify-center relative px-2 py-1 md:py-1.5 snap-start select-none"
+    >
       {/* Centered 9:16 Video Frame */}
-      <div className="relative w-full h-full md:h-[calc(100%-0.75rem)] md:w-auto md:aspect-[9/16] bg-black rounded-none md:rounded-2xl overflow-hidden shadow-2xl border-0 md:border md:border-white/10 ambient-glow flex items-center justify-center">
+      <div
+        onContextMenu={(e) => e.preventDefault()}
+        className="relative w-full h-full md:h-[calc(100%-0.75rem)] md:w-auto md:aspect-[9/16] bg-black rounded-none md:rounded-2xl overflow-hidden shadow-2xl border-0 md:border md:border-white/10 ambient-glow flex items-center justify-center"
+      >
         {shouldMountPlayer ? (
           <VideoPlayer
             key={reel.id}

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getPayload } from 'payload';
 import config from '@payload-config';
+// @ts-ignore
 import { Innertube, Platform, ClientType } from 'youtubei.js';
+// @ts-ignore
 import ffmpegPath from 'ffmpeg-static';
 import { execFile } from 'child_process';
 import { promisify } from 'util';

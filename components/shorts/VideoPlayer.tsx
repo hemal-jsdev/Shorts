@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import Hls from 'hls.js';
-import { Volume2, VolumeX, Play, Pause, Heart, Loader2 } from 'lucide-react';
+import { Volume2, VolumeX, Play, Pause, Heart, Loader2, RotateCcw, RotateCw, FastForward, Rewind } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useShortsStore } from '../../store/useShortsStore';
 
@@ -43,6 +43,36 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [currentTimeState, setCurrentTimeState] = useState(0);
   const [showPosterCover, setShowPosterCover] = useState(true);
   const [isPlaybackReady, setIsPlaybackReady] = useState(false);
+
+  // Modern Seek Ripple and Hold-to-Speed HUD States
+  const [seekRipple, setSeekRipple] = useState<{
+    direction: 'left' | 'right';
+    seconds: number;
+    id: number;
+  } | null>(null);
+
+  const [holdingState, setHoldingState] = useState<{
+    active: boolean;
+    direction: 'forward' | 'backward';
+    text: string;
+  } | null>(null);
+
+  const seekAccumulatorRef = useRef<{
+    direction: 'left' | 'right';
+    seconds: number;
+    timer: NodeJS.Timeout | null;
+  }>({ direction: 'right', seconds: 0, timer: null });
+
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isHoldingRef = useRef(false);
+  const wasHoldingRef = useRef(false);
+  const rewindIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTapRef = useRef<{
+    time: number;
+    zone: 'left' | 'center' | 'right';
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Debounced waiting handler: only show loading spinner if buffering lasts >350ms (Instagram Reels behavior)
   const waitingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -87,6 +117,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(flashTimeoutRef.current);
       flashTimeoutRef.current = null;
     }
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (rewindIntervalRef.current) {
+      clearInterval(rewindIntervalRef.current);
+      rewindIntervalRef.current = null;
+    }
+    if (seekAccumulatorRef.current.timer) {
+      clearTimeout(seekAccumulatorRef.current.timer);
+      seekAccumulatorRef.current.timer = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.playbackRate = 1.0;
+    }
+    isHoldingRef.current = false;
+    wasHoldingRef.current = false;
+    setHoldingState(null);
+    setSeekRipple(null);
+
     if (isActive) {
       activeStartTimeRef.current = Date.now();
     }
@@ -100,26 +150,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (waitingTimerRef.current) {
         clearTimeout(waitingTimerRef.current);
       }
-    };
-  }, []);
-
-  // Listen to Spacebar shortcut for the active video
-  useEffect(() => {
-    if (!isActive) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
-      if (e.code === 'Space') {
-        const currentlyPlaying = useShortsStore.getState().isPlaying;
-        triggerFlash(!currentlyPlaying ? 'play' : 'pause');
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+      if (rewindIntervalRef.current) {
+        clearInterval(rewindIntervalRef.current);
+      }
+      if (seekAccumulatorRef.current.timer) {
+        clearTimeout(seekAccumulatorRef.current.timer);
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isActive]);
+  }, []);
 
   const youtubeId = extractYouTubeId(src);
 
@@ -403,11 +444,183 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Click & Double click handler with swipe/drag vs click discrimination
   const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Perform seek forward / backward with rapid tap accumulation
+  const performSeek = (direction: 'left' | 'right', delta: number) => {
+    const dur = videoRef.current?.duration || duration || 60;
+    const current = videoRef.current ? videoRef.current.currentTime : currentTimeState;
+    const newTime = direction === 'left' ? Math.max(0, current - delta) : Math.min(dur, current + delta);
+
+    if (videoRef.current) {
+      videoRef.current.currentTime = newTime;
+      if (onTimeUpdate && isActive) onTimeUpdate(newTime, dur);
+    } else if (youtubeId) {
+      sendYtCommand('seekTo', [newTime, true]);
+      if (onTimeUpdate && isActive) onTimeUpdate(newTime, dur);
+    }
+    setCurrentTimeState(newTime);
+
+    // Accumulate seconds if tapped rapidly
+    if (seekAccumulatorRef.current.timer && seekAccumulatorRef.current.direction === direction) {
+      clearTimeout(seekAccumulatorRef.current.timer);
+      seekAccumulatorRef.current.seconds += delta;
+    } else {
+      if (seekAccumulatorRef.current.timer) clearTimeout(seekAccumulatorRef.current.timer);
+      seekAccumulatorRef.current = { direction, seconds: delta, timer: null };
+    }
+
+    const currentAccumulated = seekAccumulatorRef.current.seconds;
+    setSeekRipple({ direction, seconds: currentAccumulated, id: Date.now() });
+
+    seekAccumulatorRef.current.timer = setTimeout(() => {
+      setSeekRipple(null);
+      seekAccumulatorRef.current = { direction, seconds: 0, timer: null };
+    }, 650);
+  };
+
+  // Start Long-Press Hold (2x Speed Forward or Fast 2x Rewind)
+  const startHolding = (direction: 'forward' | 'backward') => {
+    if (isHoldingRef.current) return;
+    isHoldingRef.current = true;
+
+    if (direction === 'forward') {
+      setHoldingState({ active: true, direction: 'forward', text: '2X Speed' });
+      if (videoRef.current) {
+        videoRef.current.playbackRate = 2.0;
+        videoRef.current.preservesPitch = true;
+      } else if (youtubeId) {
+        sendYtCommand('setPlaybackRate', [2]);
+      }
+    } else {
+      setHoldingState({ active: true, direction: 'backward', text: '2X Rewind' });
+      if (rewindIntervalRef.current) clearInterval(rewindIntervalRef.current);
+      rewindIntervalRef.current = setInterval(() => {
+        if (videoRef.current) {
+          const next = Math.max(0, videoRef.current.currentTime - 0.2);
+          videoRef.current.currentTime = next;
+          setCurrentTimeState(next);
+          if (onTimeUpdate && isActive) onTimeUpdate(next, videoRef.current.duration || duration);
+        } else if (youtubeId) {
+          setCurrentTimeState((prev) => {
+            const next = Math.max(0, prev - 0.2);
+            sendYtCommand('seekTo', [next, true]);
+            if (onTimeUpdate && isActive) onTimeUpdate(next, duration);
+            return next;
+          });
+        }
+      }, 80);
+    }
+  };
+
+  // Stop Long-Press Hold and cleanly restore normal speed
+  const stopHolding = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (rewindIntervalRef.current) {
+      clearInterval(rewindIntervalRef.current);
+      rewindIntervalRef.current = null;
+    }
+
+    if (isHoldingRef.current) {
+      isHoldingRef.current = false;
+      wasHoldingRef.current = true;
+      setTimeout(() => {
+        wasHoldingRef.current = false;
+      }, 250);
+
+      if (videoRef.current) {
+        videoRef.current.playbackRate = 1.0;
+      } else if (youtubeId) {
+        sendYtCommand('setPlaybackRate', [1]);
+      }
+      setHoldingState(null);
+    }
+  };
+
+  // Listen to Spacebar and Arrow shortcuts for the active video
+  useEffect(() => {
+    if (!isActive) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        const currentlyPlaying = useShortsStore.getState().isPlaying;
+        togglePlayPause();
+        triggerFlash(!currentlyPlaying ? 'play' : 'pause');
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        performSeek('left', 5);
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        performSeek('right', 5);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isActive, duration, currentTimeState, isPlaying]);
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = clickX / rect.width;
     pointerStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+
+    if (!isActive) return;
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+
+    longPressTimerRef.current = setTimeout(() => {
+      if (ratio > 0.55) {
+        startHolding('forward');
+      } else if (ratio < 0.45) {
+        startHolding('backward');
+      } else {
+        startHolding('forward');
+      }
+    }, 320);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerStartRef.current) {
+      const dist = Math.hypot(
+        e.clientX - pointerStartRef.current.x,
+        e.clientY - pointerStartRef.current.y,
+      );
+      if (dist > 10) {
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }
+        if (isHoldingRef.current) {
+          stopHolding();
+        }
+      }
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (isHoldingRef.current) {
+      stopHolding();
+    }
   };
 
   const handleVideoClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // 0. If user was long-press holding, suppress click
+    if (wasHoldingRef.current) {
+      return;
+    }
+
     // 1. Guard against clicks fired during scroll/swipe release transition
     if (Date.now() - activeStartTimeRef.current < 450) {
       return;
@@ -427,6 +640,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
+    const ratio = clickX / rect.width;
+    const zone: 'left' | 'center' | 'right' = ratio < 0.35 ? 'left' : ratio > 0.65 ? 'right' : 'center';
+    const now = Date.now();
 
     if (showPosterCover) {
       setShowPosterCover(false);
@@ -434,26 +650,53 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (youtubeId) sendYtCommand('playVideo');
     }
 
-    if (clickTimeoutRef.current) {
-      clearTimeout(clickTimeoutRef.current);
-      clickTimeoutRef.current = null;
-      setHeartCoords({ x: clickX, y: clickY });
-      setShowHeartBurst(true);
-      setTimeout(() => setShowHeartBurst(false), 900);
-      if (onDoubleTapLike) onDoubleTapLike();
+    // Check for double click / double tap in the same zone
+    const isDoubleTap =
+      lastTapRef.current &&
+      now - lastTapRef.current.time < 280 &&
+      lastTapRef.current.zone === zone;
+
+    if (isDoubleTap) {
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+        clickTimeoutRef.current = null;
+      }
+      lastTapRef.current = null;
+
+      if (zone === 'left') {
+        performSeek('left', 5);
+      } else if (zone === 'right') {
+        performSeek('right', 5);
+      } else {
+        // Center zone: Instagram double-tap heart like
+        setHeartCoords({ x: clickX, y: clickY });
+        setShowHeartBurst(true);
+        setTimeout(() => setShowHeartBurst(false), 900);
+        if (onDoubleTapLike) onDoubleTapLike();
+      }
     } else {
+      // First tap
+      lastTapRef.current = { time: now, zone, x: clickX, y: clickY };
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+      }
       clickTimeoutRef.current = setTimeout(() => {
         const willPlay = !isPlaying;
         togglePlayPause();
         triggerFlash(willPlay ? 'play' : 'pause');
         clickTimeoutRef.current = null;
-      }, 200);
+        lastTapRef.current = null;
+      }, 220);
     }
   };
 
   return (
     <div
       onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onPointerLeave={handlePointerUp}
       onClick={handleVideoClick}
       className="relative w-full h-full cursor-pointer bg-black flex items-center justify-center overflow-hidden select-none"
     >
@@ -532,7 +775,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         />
       )}
 
-      {/* Modern YouTube Shorts Transient Play/Pause Flash Indicator (No Black Overlay, Auto-Disappearing) */}
+      {/* Modern YouTube Shorts Transient Play/Pause Flash Indicator */}
       <AnimatePresence mode="wait">
         {isActive && flashIcon && (
           <motion.div
@@ -554,7 +797,122 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Instagram Reels Minimalist Spinner (Only shown on active video if buffering, never during background preload) */}
+      {/* 2X Speed / Rewind HUD Badges & Directional Motion Streams (Alternative Left & Right) */}
+      <AnimatePresence>
+        {isActive && holdingState && holdingState.direction === 'forward' && (
+          <React.Fragment key="hud-hold-forward">
+            {/* Right Side 2X Speed Motion Stream Gradient */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="absolute right-0 top-0 bottom-0 w-2/5 pointer-events-none z-10 bg-gradient-to-l from-amber-500/15 via-amber-500/5 to-transparent flex items-center justify-end pr-5"
+            >
+              <div className="flex flex-col items-center gap-6 opacity-30">
+                <FastForward className="w-8 h-8 text-amber-400 animate-pulse" />
+              </div>
+            </motion.div>
+
+            {/* Right Side 2X Speed Floating HUD Card */}
+            <motion.div
+              initial={{ opacity: 0, x: 30, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 30, scale: 0.9 }}
+              transition={{ type: 'spring', damping: 22, stiffness: 350 }}
+              className="absolute top-20 right-4 z-30 pointer-events-none flex flex-col items-end gap-1 select-none"
+            >
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/85 backdrop-blur-xl border border-amber-400/40 shadow-[0_8px_32px_rgba(245,158,11,0.35)]">
+                <span className="text-white text-xs font-black tracking-wider uppercase drop-shadow">
+                  2X SPEED
+                </span>
+                <FastForward className="w-4 h-4 text-amber-400 fill-amber-400 animate-pulse" />
+              </div>
+            </motion.div>
+          </React.Fragment>
+        )}
+
+        {isActive && holdingState && holdingState.direction === 'backward' && (
+          <React.Fragment key="hud-hold-backward">
+            {/* Left Side 2X Rewind Motion Stream Gradient */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="absolute left-0 top-0 bottom-0 w-2/5 pointer-events-none z-10 bg-gradient-to-r from-cyan-500/15 via-cyan-500/5 to-transparent flex items-center justify-start pl-5"
+            >
+              <div className="flex flex-col items-center gap-6 opacity-30">
+                <Rewind className="w-8 h-8 text-cyan-400 animate-pulse" />
+              </div>
+            </motion.div>
+
+            {/* Left Side 2X Rewind Floating HUD Card */}
+            <motion.div
+              initial={{ opacity: 0, x: -30, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: -30, scale: 0.9 }}
+              transition={{ type: 'spring', damping: 22, stiffness: 350 }}
+              className="absolute top-20 left-4 z-30 pointer-events-none flex flex-col items-start gap-1 select-none"
+            >
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/85 backdrop-blur-xl border border-cyan-400/40 shadow-[0_8px_32px_rgba(6,182,212,0.35)]">
+                <Rewind className="w-4 h-4 text-cyan-400 fill-cyan-400 animate-pulse" />
+                <span className="text-white text-xs font-black tracking-wider uppercase drop-shadow">
+                  2X REWIND
+                </span>
+              </div>
+            </motion.div>
+          </React.Fragment>
+        )}
+      </AnimatePresence>
+
+      {/* YouTube-style Double Tap Left Seek Ripple (-5s) */}
+      <AnimatePresence>
+        {isActive && seekRipple && seekRipple.direction === 'left' && (
+          <motion.div
+            key={`seek-left-${seekRipple.id}`}
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.15 }}
+            transition={{ duration: 0.35, ease: 'easeOut' }}
+            className="absolute left-0 top-0 bottom-0 w-2/5 z-20 pointer-events-none flex flex-col items-center justify-center bg-gradient-to-r from-white/20 via-white/5 to-transparent rounded-r-[120px]"
+          >
+            <div className="flex flex-col items-center gap-1.5 -translate-x-3">
+              <div className="w-14 h-14 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-xl">
+                <RotateCcw className="w-7 h-7 text-white animate-pulse" />
+              </div>
+              <span className="text-white text-sm font-black tracking-wider drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                -{seekRipple.seconds}s
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* YouTube-style Double Tap Right Seek Ripple (+5s) */}
+      <AnimatePresence>
+        {isActive && seekRipple && seekRipple.direction === 'right' && (
+          <motion.div
+            key={`seek-right-${seekRipple.id}`}
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.15 }}
+            transition={{ duration: 0.35, ease: 'easeOut' }}
+            className="absolute right-0 top-0 bottom-0 w-2/5 z-20 pointer-events-none flex flex-col items-center justify-center bg-gradient-to-l from-white/20 via-white/5 to-transparent rounded-l-[120px]"
+          >
+            <div className="flex flex-col items-center gap-1.5 translate-x-3">
+              <div className="w-14 h-14 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center border border-white/20 shadow-xl">
+                <RotateCw className="w-7 h-7 text-white animate-pulse" />
+              </div>
+              <span className="text-white text-sm font-black tracking-wider drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                +{seekRipple.seconds}s
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Instagram Reels Minimalist Spinner */}
       <AnimatePresence>
         {isActive && isLoading && (
           <motion.div

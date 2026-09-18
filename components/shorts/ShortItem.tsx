@@ -22,20 +22,19 @@ export const ShortItem: React.FC<ShortItemProps> = ({
 }) => {
   const distance = Math.abs(index - activeIndex);
   const isActive = distance === 0;
-  const isPreloadCandidate = distance === 1;
+  // Instagram/TikTok Sliding Window: Preload 1 previous reel, active reel, and next 2 reels
+  const shouldMountPlayer = index >= activeIndex - 1 && index <= activeIndex + 2;
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(reel.durationSeconds || 45);
   const [seekTime, setSeekTime] = useState<number | null>(null);
   const [viewLogged, setViewLogged] = useState(false);
-  const [sessionKey, setSessionKey] = useState(0);
 
-  // Reset video position and give a clean session whenever the user returns to this reel
+  // Reset video position whenever the user returns to this reel
   React.useEffect(() => {
     if (isActive) {
       setCurrentTime(0);
       setSeekTime(null);
-      setSessionKey((prev) => prev + 1);
     } else {
       setCurrentTime(0);
       setSeekTime(null);
@@ -79,12 +78,12 @@ export const ShortItem: React.FC<ShortItemProps> = ({
     <div className="short-slide-item w-full h-[calc(100dvh-3.5rem)] flex items-center justify-center relative px-2 py-1 md:py-1.5 snap-start select-none">
       {/* Centered 9:16 Video Frame */}
       <div className="relative w-full h-full md:h-[calc(100%-0.75rem)] md:w-auto md:aspect-[9/16] bg-black rounded-none md:rounded-2xl overflow-hidden shadow-2xl border-0 md:border md:border-white/10 ambient-glow flex items-center justify-center">
-        {isActive ? (
+        {shouldMountPlayer ? (
           <VideoPlayer
-            key={`${reel.id}-${sessionKey}`}
+            key={reel.id}
             src={reel.hlsUrl}
             poster={reel.thumbnailUrl || undefined}
-            isActive={true}
+            isActive={isActive}
             duration={duration}
             seekTime={seekTime}
             onTimeUpdate={handleTimeUpdate}
@@ -96,6 +95,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
               <img
                 src={reel.thumbnailUrl}
                 alt={reel.caption || 'Reel'}
+                loading="lazy"
                 className="w-full h-full object-cover"
               />
             ) : (

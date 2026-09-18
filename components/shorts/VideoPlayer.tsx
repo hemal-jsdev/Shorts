@@ -237,6 +237,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(interval);
   }, [youtubeId, isActive, isPlaying, isPlaybackReady, duration, onTimeUpdate]);
 
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const wasActiveRef = useRef(isActive);
+
   // Initialize HLS or native video streaming (for Cloudflare Stream / MP4)
   useEffect(() => {
     if (youtubeId) {
@@ -253,22 +259,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       const hls = new Hls({
-        // Instagram-Style Fast Start: Start with lowest resolution rendition (240p/360p) for instant first-frame playback
+        // Instagram-Style Fast Start: Start with lowest rendition (240p/360p) for instant first-frame playback
         startLevel: 0,
-        // Conservative initial bandwidth estimate (350kbps) so it downloads tiny chunks in <150ms
-        abrEwmaDefaultEstimate: 350000,
-        // Responsive ABR: step down to low-res pixel quality instead of stalling on slow connections
+        // Start preloading immediately in background
+        autoStartLoad: true,
+        // Conservative initial bandwidth estimate so tiny chunks are fetched in <150ms
+        abrEwmaDefaultEstimate: 400000,
         abrBandWidthFactor: 0.8,
         abrBandWidthUpFactor: 0.7,
-        // Lean buffer for fast switching
+        // Lean buffer for fast switching and low memory footprint
         maxBufferLength: 4,
         maxMaxBufferLength: 8,
-        maxBufferSize: 10 * 1024 * 1024,
-        backBufferLength: 4,
+        maxBufferSize: 8 * 1024 * 1024,
+        backBufferLength: 2,
         enableWorker: true,
         lowLatencyMode: true,
         capLevelToPlayerSize: true,
-        // Fast error recovery: retry with lower level instead of stalling
         fragLoadingMaxRetry: 4,
         fragLoadingRetryDelay: 500,
         levelLoadingMaxRetry: 3,
@@ -280,14 +286,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         handlePlaying();
-        video.currentTime = 0;
-        if (isActive && isPlaying) {
+        if (isActiveRef.current && isPlayingRef.current) {
           const playPromise = video.play();
           if (playPromise !== undefined) {
             playPromise
               .then(() => handlePlaying())
               .catch(() => {
-                // Autoplay blocked without user gesture -> fallback to muted autoplay (Instagram standard)
                 video.muted = true;
                 video.play().catch(() => {});
                 handlePlaying();
@@ -304,7 +308,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              // Step down to lowest level (240p) on network dips instead of freezing
               if (hls.currentLevel > 0) {
                 hls.currentLevel = 0;
               }
@@ -325,8 +328,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       video.src = src;
       video.onloadedmetadata = () => {
         handlePlaying();
-        video.currentTime = 0;
-        if (isActive && isPlaying) {
+        if (isActiveRef.current && isPlayingRef.current) {
           video.play().catch(() => {
             video.muted = true;
             video.play().catch(() => {});
@@ -337,8 +339,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       video.src = src;
       video.onloadedmetadata = () => {
         handlePlaying();
-        video.currentTime = 0;
-        if (isActive && isPlaying) {
+        if (isActiveRef.current && isPlayingRef.current) {
           video.play().catch(() => {
             video.muted = true;
             video.play().catch(() => {});
@@ -355,32 +356,49 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [src, youtubeId]);
 
-  // Sync HTML5 active play/pause state
+  // Sync HTML5 active play/pause & audio state without destroying preloaded buffers
   useEffect(() => {
     if (youtubeId) return;
     const video = videoRef.current;
     if (!video) return;
 
     if (isActive) {
+      video.muted = isMuted;
+      video.volume = isMuted ? 0 : volume;
       if (isPlaying) {
-        video.play().catch(() => {});
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => handlePlaying())
+            .catch(() => {
+              // Fallback to muted autoplay on strict browser gesture policies
+              video.muted = true;
+              video.play().catch(() => {});
+              handlePlaying();
+            });
+        }
       } else {
         video.pause();
       }
     } else {
+      // Offscreen / Preloaded Reel: keep paused and muted to prevent audio leakage
       video.pause();
-      video.currentTime = 0;
+      video.muted = true;
+      if (wasActiveRef.current) {
+        video.currentTime = 0;
+      }
     }
-  }, [isActive, isPlaying, youtubeId]);
+    wasActiveRef.current = isActive;
+  }, [isActive, isPlaying, isMuted, volume, youtubeId]);
 
-  // Sync mute & volume for HTML5 video
+  // Sync mute & volume for HTML5 video when active
   useEffect(() => {
-    if (youtubeId) return;
+    if (youtubeId || !isActive) return;
     const video = videoRef.current;
     if (!video) return;
     video.muted = isMuted;
     video.volume = isMuted ? 0 : volume;
-  }, [isMuted, volume, youtubeId]);
+  }, [isActive, isMuted, volume, youtubeId]);
 
   // Click & Double click handler with swipe/drag vs click discrimination
   const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -500,13 +518,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           preload="auto"
           loop
           playsInline
-          muted={isMuted}
+          muted={!isActive || isMuted}
           onCanPlay={handlePlaying}
           onLoadedData={handlePlaying}
           onWaiting={handleWaiting}
           onPlaying={handlePlaying}
           onTimeUpdate={() => {
-            if (videoRef.current && onTimeUpdate) {
+            if (videoRef.current && onTimeUpdate && isActive) {
               onTimeUpdate(videoRef.current.currentTime, videoRef.current.duration || 0);
             }
           }}
@@ -536,9 +554,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Instagram Reels Minimalist Spinner (Subtle, never blacks out or blurs the video) */}
+      {/* Instagram Reels Minimalist Spinner (Only shown on active video if buffering, never during background preload) */}
       <AnimatePresence>
-        {isLoading && (
+        {isActive && isLoading && (
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -569,17 +587,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Quick Audio Mute Toggle Button (Top Right corner) */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleMute();
-        }}
-        aria-label={isMuted ? 'Unmute video' : 'Mute video'}
-        className="absolute top-4 right-4 z-20 p-2.5 rounded-full glass-button text-white shadow-lg cursor-pointer"
-      >
-        {isMuted ? <VolumeX className="w-5 h-5 text-white/90" /> : <Volume2 className="w-5 h-5 text-white/90" />}
-      </button>
+      {/* Quick Audio Mute Toggle Button (Top Right corner, active reel only) */}
+      {isActive && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleMute();
+          }}
+          aria-label={isMuted ? 'Unmute video' : 'Mute video'}
+          className="absolute top-4 right-4 z-20 p-2.5 rounded-full glass-button text-white shadow-lg cursor-pointer"
+        >
+          {isMuted ? <VolumeX className="w-5 h-5 text-white/90" /> : <Volume2 className="w-5 h-5 text-white/90" />}
+        </button>
+      )}
     </div>
   );
 };

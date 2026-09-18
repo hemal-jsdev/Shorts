@@ -89,27 +89,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({ currentTime, duration,
       }}
       className="absolute bottom-0 inset-x-0 z-30 h-7 flex items-end pb-0 cursor-pointer select-none touch-none group"
       style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
-    >
-      {/* Floating Scrubber Time Tooltip (YouTube Shorts Style) */}
-      <AnimatePresence>
-        {isDragging && (
-          <motion.div
-            initial={{ opacity: 0, y: 6, scale: 0.85 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.85 }}
-            transition={{ duration: 0.15 }}
-            style={{ left: `${percentage}%` }}
-            className="absolute bottom-6 -translate-x-1/2 pointer-events-none z-40"
-          >
-            <div className="px-2.5 py-1 rounded-full bg-black/90 backdrop-blur-md border border-white/20 shadow-2xl flex items-center gap-1 text-[11px] font-bold text-white whitespace-nowrap">
-              <span className="text-red-400">{formatTime(effectiveTime)}</span>
-              <span className="text-white/40">/</span>
-              <span className="text-white/80">{formatTime(duration)}</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+    >      
       {/* Progress Track Background */}
       <div
         className={`w-full transition-all duration-150 relative bg-white/25 backdrop-blur-sm ${

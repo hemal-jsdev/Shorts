@@ -36,7 +36,7 @@ export default async function ShortDetailPage({ params }: Props) {
     targetReel = null;
   }
 
-  const feedData = await reelsApi.getFeed(undefined, 10);
+  const feedData = await reelsApi.getFeed(undefined, 25);
   let reels = feedData.items;
 
   if (targetReel) {

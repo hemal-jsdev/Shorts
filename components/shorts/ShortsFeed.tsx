@@ -19,6 +19,7 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
   const [reels, setReels] = useState<Reel[]>(initialReels);
   const [nextCursor, setNextCursor] = useState<string | null>(initialCursor || null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const isLoadingMoreRef = useRef(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isScrollingRef = useRef(false);
@@ -33,19 +34,59 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
     closeComments,
   } = useShortsStore();
 
-  // Scroll to index programmatically
-  const scrollToIndex = useCallback((index: number) => {
-    if (!containerRef.current) return;
-    const targetElement = containerRef.current.children[index] as HTMLElement;
-    if (targetElement) {
-      isScrollingRef.current = true;
-      targetElement.scrollIntoView({ behavior: 'smooth' });
-      setActiveIndex(index);
-      setTimeout(() => {
-        isScrollingRef.current = false;
-      }, 500);
+  // Robust pagination: load next batch of reels
+  const loadMoreReels = useCallback(() => {
+    if (!nextCursor || isLoadingMoreRef.current) return;
+    isLoadingMoreRef.current = true;
+    setIsLoadingMore(true);
+
+    reelsApi
+      .getFeed(nextCursor, 20)
+      .then((data) => {
+        if (data.items && data.items.length > 0) {
+          setReels((prev) => {
+            const existingIds = new Set(prev.map((r) => r.id));
+            const newUnique = data.items.filter((r) => !existingIds.has(r.id));
+            return [...prev, ...newUnique];
+          });
+        }
+        setNextCursor(data.nextCursor);
+      })
+      .catch((err) => {
+        console.warn('[ShortsFeed] Error fetching more reels:', err);
+      })
+      .finally(() => {
+        isLoadingMoreRef.current = false;
+        setIsLoadingMore(false);
+      });
+  }, [nextCursor]);
+
+  // Proactively fetch more reels whenever approaching within 3 items of the end
+  useEffect(() => {
+    if (activeIndex >= reels.length - 3 && nextCursor) {
+      loadMoreReels();
     }
-  }, [setActiveIndex]);
+  }, [activeIndex, reels.length, nextCursor, loadMoreReels]);
+
+  // Scroll to index programmatically
+  const scrollToIndex = useCallback(
+    (index: number) => {
+      if (!containerRef.current) return;
+      if (index >= reels.length - 3 && nextCursor) {
+        loadMoreReels();
+      }
+      const targetElement = containerRef.current.children[index] as HTMLElement;
+      if (targetElement) {
+        isScrollingRef.current = true;
+        targetElement.scrollIntoView({ behavior: 'smooth' });
+        setActiveIndex(index);
+        setTimeout(() => {
+          isScrollingRef.current = false;
+        }, 500);
+      }
+    },
+    [setActiveIndex, reels.length, nextCursor, loadMoreReels],
+  );
 
   // Handle scroll events with Intersection Observer or scroll detection
   const handleScroll = useCallback(() => {
@@ -65,16 +106,11 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
       }
 
       // Pre-fetch next page if near bottom
-      if (newIndex >= reels.length - 2 && nextCursor && !isLoadingMore) {
-        setIsLoadingMore(true);
-        reelsApi.getFeed(nextCursor, 5).then((data) => {
-          setReels((prev) => [...prev, ...data.items]);
-          setNextCursor(data.nextCursor);
-          setIsLoadingMore(false);
-        }).catch(() => setIsLoadingMore(false));
+      if (newIndex >= reels.length - 3 && nextCursor) {
+        loadMoreReels();
       }
     }
-  }, [activeIndex, reels, nextCursor, isLoadingMore, setActiveIndex]);
+  }, [activeIndex, reels, nextCursor, loadMoreReels, setActiveIndex]);
 
   // Keyboard navigation shortcuts
   useEffect(() => {
@@ -90,6 +126,8 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
           e.preventDefault();
           if (activeIndex < reels.length - 1) {
             scrollToIndex(activeIndex + 1);
+          } else if (nextCursor) {
+            loadMoreReels();
           }
           break;
         case 'ArrowUp':
@@ -120,7 +158,7 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeIndex, reels, activeCommentReel, scrollToIndex, togglePlayPause, toggleMute, openComments, closeComments]);
+  }, [activeIndex, reels, nextCursor, activeCommentReel, scrollToIndex, loadMoreReels, togglePlayPause, toggleMute, openComments, closeComments]);
 
   // Optimistic like updater
   const handleLikeUpdate = (reelId: string, isLiked: boolean, count: number) => {
@@ -166,9 +204,15 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
       <div className="hidden lg:block fixed right-8 top-1/2 -translate-y-1/2 z-30">
         <DesktopNavButtons
           onPrev={() => scrollToIndex(activeIndex - 1)}
-          onNext={() => scrollToIndex(activeIndex + 1)}
+          onNext={() => {
+            if (activeIndex < reels.length - 1) {
+              scrollToIndex(activeIndex + 1);
+            } else if (nextCursor) {
+              loadMoreReels();
+            }
+          }}
           hasPrev={activeIndex > 0}
-          hasNext={activeIndex < reels.length - 1}
+          hasNext={activeIndex < reels.length - 1 || !!nextCursor}
         />
       </div>
 

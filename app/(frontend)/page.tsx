@@ -4,7 +4,7 @@ import { ShortsFeed } from '@/components/shorts/ShortsFeed';
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
-  const feedData = await reelsApi.getFeed(undefined, 5);
+  const feedData = await reelsApi.getFeed(undefined, 25);
 
   return (
     <ShortsFeed

@@ -28,7 +28,7 @@ export const reelsApi = {
   },
 
   // Fetch paginated feed
-  getFeed: async (cursor?: string, limit = 10): Promise<{ items: Reel[]; nextCursor: string | null; hasMore: boolean }> => {
+  getFeed: async (cursor?: string, limit = 25): Promise<{ items: Reel[]; nextCursor: string | null; hasMore: boolean }> => {
     try {
       const res = await api.get('/reels/feed', {
         params: { cursor, limit },

@@ -114,4 +114,21 @@ export const reelsApi = {
     });
     return res.data.doc || res.data.data || res.data;
   },
+
+  // Fetch YouTube Shorts metadata for preview
+  getYouTubeMetadata: async (url: string): Promise<any> => {
+    const res = await api.get('/youtube/metadata', {
+      params: { url },
+    });
+    return res.data.data;
+  },
+
+  // Ingest and upload YouTube Short to Cloudflare Stream
+  importYouTubeShort: async (url: string, caption?: string): Promise<Reel> => {
+    const res = await api.post('/youtube/import', {
+      url,
+      caption,
+    });
+    return res.data.data;
+  },
 };

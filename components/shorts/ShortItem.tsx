@@ -77,47 +77,44 @@ export const ShortItem: React.FC<ShortItemProps> = ({
 
   return (
     <div className="short-slide-item w-full h-[calc(100dvh-3.5rem)] flex items-center justify-center relative px-2 py-1 md:py-1.5 snap-start select-none">
-      {/* Centered 9:16 Video Player + Right Action Column */}
-      <div className="relative flex items-center justify-center gap-3 md:gap-4 w-full h-full max-w-fit mx-auto">
-        {/* 9:16 Video Frame (Maximized with minimal sleek margin) */}
-        <div className="relative w-full h-full md:h-[calc(100%-0.75rem)] md:w-auto md:aspect-[9/16] bg-black rounded-none md:rounded-2xl overflow-hidden shadow-2xl border-0 md:border md:border-white/10 ambient-glow flex items-center justify-center">
-          {isActive ? (
-            <VideoPlayer
-              key={`${reel.id}-${sessionKey}`}
-              src={reel.hlsUrl}
-              poster={reel.thumbnailUrl || undefined}
-              isActive={true}
-              duration={duration}
-              seekTime={seekTime}
-              onTimeUpdate={handleTimeUpdate}
-              onDoubleTapLike={handleToggleLike}
-            />
-          ) : (
-            <div className="relative w-full h-full bg-black flex items-center justify-center overflow-hidden">
-              {reel.thumbnailUrl ? (
-                <img
-                  src={reel.thumbnailUrl}
-                  alt={reel.caption || 'Reel'}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="w-12 h-12 rounded-full border border-white/20 flex items-center justify-center text-white/40 font-bold">
-                  9:16
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Video Information Overlay */}
-          <VideoOverlay reel={reel} />
-
-          {/* Glowing Red Interactive Seekbar with Drag & Click Seeking */}
-          <ProgressBar
-            currentTime={currentTime}
+      {/* Centered 9:16 Video Frame */}
+      <div className="relative w-full h-full md:h-[calc(100%-0.75rem)] md:w-auto md:aspect-[9/16] bg-black rounded-none md:rounded-2xl overflow-hidden shadow-2xl border-0 md:border md:border-white/10 ambient-glow flex items-center justify-center">
+        {isActive ? (
+          <VideoPlayer
+            key={`${reel.id}-${sessionKey}`}
+            src={reel.hlsUrl}
+            poster={reel.thumbnailUrl || undefined}
+            isActive={true}
             duration={duration}
-            onSeek={handleSeek}
+            seekTime={seekTime}
+            onTimeUpdate={handleTimeUpdate}
+            onDoubleTapLike={handleToggleLike}
           />
-        </div>
+        ) : (
+          <div className="relative w-full h-full bg-black flex items-center justify-center overflow-hidden">
+            {reel.thumbnailUrl ? (
+              <img
+                src={reel.thumbnailUrl}
+                alt={reel.caption || 'Reel'}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded-full border border-white/20 flex items-center justify-center text-white/40 font-bold">
+                9:16
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Video Information Overlay */}
+        <VideoOverlay reel={reel} />
+
+        {/* Glowing Red Interactive Seekbar with Drag & Click Seeking */}
+        <ProgressBar
+          currentTime={currentTime}
+          duration={duration}
+          onSeek={handleSeek}
+        />
       </div>
     </div>
   );

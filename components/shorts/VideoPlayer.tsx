@@ -78,10 +78,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const waitingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleWaiting = () => {
+    // Suppress loading spinner during active user gestures (2X Speed / Rewind)
+    if (isHoldingRef.current) return;
     if (!waitingTimerRef.current) {
       waitingTimerRef.current = setTimeout(() => {
-        setIsLoading(true);
-      }, 350);
+        if (!isHoldingRef.current) {
+          setIsLoading(true);
+        }
+      }, 450);
     }
   };
 
@@ -308,11 +312,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         abrEwmaDefaultEstimate: 400000,
         abrBandWidthFactor: 0.8,
         abrBandWidthUpFactor: 0.7,
-        // Lean buffer for fast switching and low memory footprint
-        maxBufferLength: 4,
-        maxMaxBufferLength: 8,
-        maxBufferSize: 8 * 1024 * 1024,
-        backBufferLength: 2,
+        // High-performance buffer for shorts: keep entire watched history in RAM for instant 2X Rewind
+        maxBufferLength: 8,
+        maxMaxBufferLength: 20,
+        maxBufferSize: 30 * 1024 * 1024,
+        backBufferLength: 60,
         enableWorker: true,
         lowLatencyMode: true,
         capLevelToPlayerSize: true,
@@ -492,22 +496,40 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     } else {
       setHoldingState({ active: true, direction: 'backward', text: '2X Rewind' });
+      setIsLoading(false);
+      if (waitingTimerRef.current) {
+        clearTimeout(waitingTimerRef.current);
+        waitingTimerRef.current = null;
+      }
+
+      // Pause playback during reverse scrub so decoder isn't fighting forward playback
+      if (videoRef.current) {
+        videoRef.current.pause();
+      } else if (youtubeId) {
+        sendYtCommand('pauseVideo');
+      }
+
       if (rewindIntervalRef.current) clearInterval(rewindIntervalRef.current);
       rewindIntervalRef.current = setInterval(() => {
         if (videoRef.current) {
-          const next = Math.max(0, videoRef.current.currentTime - 0.2);
-          videoRef.current.currentTime = next;
+          const video = videoRef.current;
+          const next = Math.max(0, video.currentTime - 0.25);
+          if ('fastSeek' in video && typeof (video as any).fastSeek === 'function') {
+            (video as any).fastSeek(next);
+          } else {
+            video.currentTime = next;
+          }
           setCurrentTimeState(next);
-          if (onTimeUpdate && isActive) onTimeUpdate(next, videoRef.current.duration || duration);
+          if (onTimeUpdate && isActive) onTimeUpdate(next, video.duration || duration);
         } else if (youtubeId) {
           setCurrentTimeState((prev) => {
-            const next = Math.max(0, prev - 0.2);
+            const next = Math.max(0, prev - 0.25);
             sendYtCommand('seekTo', [next, true]);
             if (onTimeUpdate && isActive) onTimeUpdate(next, duration);
             return next;
           });
         }
-      }, 80);
+      }, 110);
     }
   };
 
@@ -531,10 +553,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       if (videoRef.current) {
         videoRef.current.playbackRate = 1.0;
+        if (isPlaying) {
+          videoRef.current.play().catch(() => {});
+        }
       } else if (youtubeId) {
         sendYtCommand('setPlaybackRate', [1]);
+        if (isPlaying) {
+          sendYtCommand('playVideo');
+        }
       }
       setHoldingState(null);
+      setIsLoading(false);
+      if (waitingTimerRef.current) {
+        clearTimeout(waitingTimerRef.current);
+        waitingTimerRef.current = null;
+      }
     }
   };
 
@@ -932,7 +965,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Instagram Reels Minimalist Spinner */}
       <AnimatePresence>
-        {isActive && isLoading && (
+        {isActive && isLoading && !holdingState && (
           <motion.div
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}

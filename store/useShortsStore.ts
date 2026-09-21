@@ -10,11 +10,14 @@ interface ShortsStore {
   isMuted: boolean;
   volume: number;
   isPlaying: boolean;
+  isAutoScroll: boolean;
   toggleMute: () => void;
   setMuted: (muted: boolean) => void;
   setVolume: (volume: number) => void;
   togglePlayPause: () => void;
   setIsPlaying: (playing: boolean) => void;
+  toggleAutoScroll: () => void;
+  setAutoScroll: (autoScroll: boolean) => void;
 
   // Drawers & Modals
   activeCommentReel: Reel | null;
@@ -42,11 +45,14 @@ export const useShortsStore = create<ShortsStore>((set) => ({
   isMuted: true,
   volume: 1,
   isPlaying: true,
+  isAutoScroll: true,
   toggleMute: () => set((state) => ({ isMuted: !state.isMuted })),
   setMuted: (muted) => set({ isMuted: muted }),
   setVolume: (volume) => set({ volume, isMuted: volume === 0 }),
   togglePlayPause: () => set((state) => ({ isPlaying: !state.isPlaying })),
   setIsPlaying: (playing) => set({ isPlaying: playing }),
+  toggleAutoScroll: () => set((state) => ({ isAutoScroll: !state.isAutoScroll })),
+  setAutoScroll: (autoScroll) => set({ isAutoScroll: autoScroll }),
 
   activeCommentReel: null,
   openComments: (reel) => set({ activeCommentReel: reel }),

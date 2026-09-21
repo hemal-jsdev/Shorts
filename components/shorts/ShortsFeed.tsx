@@ -169,6 +169,22 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
     );
   };
 
+  const handleAutoAdvance = useCallback(
+    (index: number) => {
+      if (index !== activeIndex) return;
+
+      if (activeIndex < reels.length - 1) {
+        scrollToIndex(activeIndex + 1);
+      } else if (nextCursor) {
+        loadMoreReels();
+        setTimeout(() => {
+          scrollToIndex(activeIndex + 1);
+        }, 400);
+      }
+    },
+    [activeIndex, reels.length, nextCursor, scrollToIndex, loadMoreReels],
+  );
+
   // Handle new reel created via direct upload
   const handleReelCreated = (newReel: Reel) => {
     setReels((prev) => [newReel, ...prev]);
@@ -190,6 +206,7 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
             index={index}
             activeIndex={activeIndex}
             onLikeUpdate={handleLikeUpdate}
+            onEnded={() => handleAutoAdvance(index)}
           />
         ))}
 

@@ -12,6 +12,7 @@ interface ShortItemProps {
   index: number;
   activeIndex: number;
   onLikeUpdate: (reelId: string, isLiked: boolean, count: number) => void;
+  onEnded?: () => void;
 }
 
 export const ShortItem: React.FC<ShortItemProps> = ({
@@ -19,6 +20,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
   index,
   activeIndex,
   onLikeUpdate,
+  onEnded,
 }) => {
   const distance = Math.abs(index - activeIndex);
   const isActive = distance === 0;
@@ -94,6 +96,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
             seekTime={seekTime}
             onTimeUpdate={handleTimeUpdate}
             onDoubleTapLike={handleToggleLike}
+            onEnded={onEnded}
           />
         ) : (
           <div className="relative w-full h-full bg-black flex items-center justify-center overflow-hidden">

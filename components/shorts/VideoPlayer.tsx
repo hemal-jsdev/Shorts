@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import Hls from 'hls.js';
 import { Volume2, VolumeX, Play, Pause, Heart, Loader2, RotateCcw, RotateCw, FastForward, Rewind } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -14,6 +14,7 @@ interface VideoPlayerProps {
   seekTime?: number | null;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onDoubleTapLike?: () => void;
+  onEnded?: () => void;
 }
 
 function extractYouTubeId(url: string): string | null {
@@ -30,12 +31,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   seekTime,
   onTimeUpdate,
   onDoubleTapLike,
+  onEnded,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  const { isMuted, volume, isPlaying, toggleMute, togglePlayPause } = useShortsStore();
+  const { isMuted, volume, isPlaying, isAutoScroll, toggleMute, togglePlayPause } = useShortsStore();
 
   const [isLoading, setIsLoading] = useState(false);
   const [showHeartBurst, setShowHeartBurst] = useState(false);
@@ -43,6 +45,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [currentTimeState, setCurrentTimeState] = useState(0);
   const [showPosterCover, setShowPosterCover] = useState(true);
   const [isPlaybackReady, setIsPlaybackReady] = useState(false);
+  const hasEndedRef = useRef(false);
 
   // Modern Seek Ripple and Hold-to-Speed HUD States
   const [seekRipple, setSeekRipple] = useState<{
@@ -139,8 +142,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (isActive) {
       activeStartTimeRef.current = Date.now();
+      hasEndedRef.current = false;
     }
   }, [isActive]);
+
+  const triggerAutoAdvance = useCallback(() => {
+    if (!isActive || !isAutoScroll || isHoldingRef.current || hasEndedRef.current) return;
+    hasEndedRef.current = true;
+    if (onEnded) {
+      onEnded();
+    }
+  }, [isActive, isAutoScroll, onEnded]);
 
   useEffect(() => {
     return () => {
@@ -186,6 +198,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         if (isPlayingNow) {
           setShowPosterCover(false);
           setIsPlaybackReady(true);
+        }
+
+        const isEnded =
+          data.info === 0 ||
+          data.info?.playerState === 0 ||
+          data.playerState === 0 ||
+          (data.event === 'onStateChange' && (data.info === 0 || data.data === 0));
+
+        if (isEnded && isActive && isAutoScroll) {
+          triggerAutoAdvance();
         }
       } catch (e) {}
     };
@@ -770,7 +792,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           ref={videoRef}
           poster={poster}
           preload="auto"
-          loop
+          loop={!isAutoScroll}
           playsInline
           muted={!isActive || isMuted}
           disablePictureInPicture
@@ -783,9 +805,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           onLoadedData={handlePlaying}
           onWaiting={handleWaiting}
           onPlaying={handlePlaying}
+          onEnded={triggerAutoAdvance}
           onTimeUpdate={() => {
-            if (videoRef.current && onTimeUpdate && isActive) {
-              onTimeUpdate(videoRef.current.currentTime, videoRef.current.duration || 0);
+            if (videoRef.current && isActive) {
+              const cur = videoRef.current.currentTime;
+              const dur = videoRef.current.duration || 0;
+              if (onTimeUpdate) {
+                onTimeUpdate(cur, dur);
+              }
+              if (isAutoScroll && dur > 1 && cur >= dur - 0.25 && !hasEndedRef.current) {
+                triggerAutoAdvance();
+              }
             }
           }}
           className="w-full h-full object-cover pointer-events-none select-none"
@@ -963,7 +993,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Quick Audio Mute Toggle Button (Top Right corner, active reel only) */}
       {isActive && (
         <button
           onClick={(e) => {
@@ -971,7 +1000,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             toggleMute();
           }}
           aria-label={isMuted ? 'Unmute video' : 'Mute video'}
-          className="absolute top-4 right-4 z-20 p-2.5 rounded-full glass-button text-white shadow-lg cursor-pointer"
+          title={isMuted ? 'Unmute' : 'Mute'}
+          className="absolute top-4 right-4 z-20 p-2.5 rounded-full glass-button text-white shadow-lg cursor-pointer transition-transform duration-150 active:scale-95 hover:bg-white/20"
         >
           {isMuted ? <VolumeX className="w-5 h-5 text-white/90" /> : <Volume2 className="w-5 h-5 text-white/90" />}
         </button>

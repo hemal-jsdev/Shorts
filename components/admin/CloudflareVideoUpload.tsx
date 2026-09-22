@@ -207,10 +207,6 @@ export const CloudflareVideoUpload: React.FC = () => {
   const [ytStep, setYtStep] = useState<number>(0); // 0: idle, 1: downloading, 2: cloudflare, 3: done
   const [importNotice, setImportNotice] = useState<string | null>(null);
 
-  // YouTube Session Cookie Refresh State
-  const [cookieRefreshStatus, setCookieRefreshStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [cookieRefreshMsg, setCookieRefreshMsg] = useState<string | null>(null);
-
   const [state, setState] = useState<UploadState>({
     status: 'idle',
     progress: 0,
@@ -366,24 +362,6 @@ export const CloudflareVideoUpload: React.FC = () => {
         progress: 0,
         errorMessage: msg,
       }));
-    }
-  };
-
-  // ── Handle YouTube Cookie Refresh via Playwright ──────────────────────────
-  const handleRefreshCookies = async () => {
-    setCookieRefreshStatus('loading');
-    setCookieRefreshMsg('Running Playwright cookie fetcher — this may take 15–30 seconds...');
-    try {
-      const res = await fetch('/api/youtube/refresh-cookies', { method: 'POST' });
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error || `HTTP ${res.status}`);
-      }
-      setCookieRefreshStatus('success');
-      setCookieRefreshMsg(json.message || 'YouTube session cookies refreshed!');
-    } catch (err: any) {
-      setCookieRefreshStatus('error');
-      setCookieRefreshMsg(err.message || 'Failed to refresh YouTube session cookies.');
     }
   };
 
@@ -645,6 +623,30 @@ export const CloudflareVideoUpload: React.FC = () => {
                 ? 'Save below or use the top Save button to publish and view in All Reels.'
                 : 'Click Save above to update this reel.'}
             </span>
+            {isCreateModeRef.current && (
+              <button
+                type="button"
+                onClick={handleSaveAndRedirect}
+                disabled={isFormProcessing}
+                style={{
+                  ...styles.saveAndRedirectBtn,
+                  opacity: isFormProcessing ? 0.7 : 1,
+                  cursor: isFormProcessing ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isFormProcessing ? (
+                  <>
+                    <span style={styles.spinIcon}>⏳</span>
+                    <span>Publishing...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🚀</span>
+                    <span>Save &amp; View All Reels</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -719,50 +721,23 @@ export const CloudflareVideoUpload: React.FC = () => {
             </button>
           </div>
 
-          {/* Error Banner with Fast-Track Cloudflare Fallback */}
+          {/* Error Banner */}
           {state.status === 'error' && (
             <div style={styles.errorBanner}>
               <span style={{ fontSize: 16 }}>⚠️</span>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <span style={{ lineHeight: 1.4 }}>{state.errorMessage}</span>
-
-                {/* Fast-Track Actions for YouTube Cloud IP Restrictions */}
-                {(state.errorMessage?.includes('Bot Protection') ||
-                  state.errorMessage?.includes('Direct Video File Upload') ||
-                  state.errorMessage?.includes('login')) && (
-                  <div style={styles.fastTrackCard}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span>🚀</span>
-                      <span>Fast-Track Cloudflare Upload (Bypass YouTube BotGuard):</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                      {youtubeUrl.trim() && (
-                        <a
-                          href={`https://ssyoutube.com/watch?v=${
-                            youtubeUrl.trim().match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|watch\?v=|watch\?.+&v=))([\w-]{11})/)?.[1] || ''
-                          }`}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={styles.fastDownloadLink}
-                          title="Open 1-click video downloader"
-                        >
-                          <span>⬇️</span>
-                          <span>1-Click Get Video File</span>
-                        </a>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        style={styles.quickUploadBtn}
-                      >
-                        <span>☁️</span>
-                        <span>Upload Video to Cloudflare Stream</span>
-                      </button>
-                    </div>
-                    <div style={{ fontSize: 11, color: '#71717a', lineHeight: 1.4, marginTop: 4 }}>
-                      💡 Permanent 1-click fix: Add <code style={styles.codeSnippet}>YOUTUBE_COOKIE</code> in your Vercel Environment Variables to let the server download from YouTube automatically without blocks.
-                    </div>
-                  </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <span>{state.errorMessage}</span>
+                {state.errorMessage?.includes('Direct Video File Upload') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('file');
+                      setState((p) => ({ ...p, status: 'idle', errorMessage: null }));
+                    }}
+                    style={styles.quickFileBtn}
+                  >
+                    📁 Switch to Direct Video File Upload
+                  </button>
                 )}
               </div>
               <button
@@ -903,75 +878,6 @@ export const CloudflareVideoUpload: React.FC = () => {
                       : 'Import to Cloudflare Stream'}
                   </span>
                 </button>
-              </div>
-
-              {/* ── YouTube Session Cookie Refresh Panel ──────────────────── */}
-              <div style={styles.cookieRefreshPanel}>
-                <div style={styles.cookieRefreshHeader}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                    <span style={{ fontSize: 14 }}>🔑</span>
-                    <span style={styles.cookieRefreshTitle}>YouTube Bot Protection Fix</span>
-                    <span style={styles.cookieRefreshBadge}>Playwright Auth</span>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={cookieRefreshStatus === 'loading'}
-                    onClick={handleRefreshCookies}
-                    style={{
-                      ...styles.cookieRefreshBtn,
-                      opacity: cookieRefreshStatus === 'loading' ? 0.7 : 1,
-                      cursor: cookieRefreshStatus === 'loading' ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {cookieRefreshStatus === 'loading' ? (
-                      <><span style={styles.cookieSpinner} />Fetching...</>
-                    ) : (
-                      <>🔄 Refresh YouTube Session</>
-                    )}
-                  </button>
-                </div>
-
-                {/* Status Message */}
-                {cookieRefreshMsg && (
-                  <div style={{
-                    ...styles.cookieStatusMsg,
-                    background: cookieRefreshStatus === 'success'
-                      ? 'rgba(16,185,129,0.08)'
-                      : cookieRefreshStatus === 'error'
-                      ? 'rgba(239,68,68,0.08)'
-                      : 'rgba(99,102,241,0.08)',
-                    borderColor: cookieRefreshStatus === 'success'
-                      ? '#10b981'
-                      : cookieRefreshStatus === 'error'
-                      ? '#ef4444'
-                      : '#6366f1',
-                    color: cookieRefreshStatus === 'success'
-                      ? '#6ee7b7'
-                      : cookieRefreshStatus === 'error'
-                      ? '#fca5a5'
-                      : '#a5b4fc',
-                  }}>
-                    <span style={{ fontSize: 13 }}>
-                      {cookieRefreshStatus === 'success' ? '✅' : cookieRefreshStatus === 'error' ? '⚠️' : '⏳'}
-                    </span>
-                    <span style={{ lineHeight: 1.5 }}>{cookieRefreshMsg}</span>
-                  </div>
-                )}
-
-                {/* Local run instructions when headless fails */}
-                {cookieRefreshStatus === 'error' && cookieRefreshMsg?.includes('locally') && (
-                  <div style={styles.cookieLocalGuide}>
-                    <div style={{ fontWeight: 700, marginBottom: 4, color: '#f59e0b' }}>📋 One-time local setup:</div>
-                    <code style={styles.cookieGuideCode}>python scripts/fetch_youtube_cookies.py</code>
-                    <div style={{ color: '#71717a', fontSize: 11, marginTop: 4 }}>
-                      Run this once on your local machine. A browser will open — log into YouTube, then close the browser. Your session will be saved for headless future runs.
-                    </div>
-                  </div>
-                )}
-
-                <div style={styles.cookieRefreshHint}>
-                  💡 If YouTube shows &ldquo;Bot Protection&rdquo; errors, click above to fetch fresh authenticated cookies using a real browser session. The cookie will be stored in your .env file automatically.
-                </div>
               </div>
             </div>
           )}
@@ -1368,52 +1274,17 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     transition: 'all 0.15s ease',
   },
-  fastTrackCard: {
-    background: '#18181b',
-    border: '1px solid #27272a',
-    borderRadius: 8,
-    padding: '12px 14px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    marginTop: 4,
-  },
-  fastDownloadLink: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '7px 14px',
-    background: '#27272a',
-    border: '1px solid #3f3f46',
-    borderRadius: 6,
-    color: '#f43f5e',
-    fontSize: 12,
-    fontWeight: 700,
-    textDecoration: 'none',
-    transition: 'all 0.15s ease',
-  },
-  quickUploadBtn: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '7px 14px',
-    background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
-    border: 'none',
-    borderRadius: 6,
+  quickFixBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 3,
+    padding: '5px 12px',
+    borderRadius: 5,
+    background: '#10b981',
     color: '#ffffff',
+    border: 'none',
     fontSize: 12,
     fontWeight: 700,
     cursor: 'pointer',
-    boxShadow: '0 2px 8px rgba(249, 115, 22, 0.3)',
-    transition: 'all 0.15s ease',
-  },
-  codeSnippet: {
-    background: '#27272a',
-    padding: '2px 6px',
-    borderRadius: 4,
-    color: '#e4e4e7',
-    fontFamily: 'ui-monospace, monospace',
-    fontSize: 11,
   },
   uploadingCard: {
     padding: 18,
@@ -1696,99 +1567,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   spinIcon: {
     display: 'inline-block',
-  },
-
-  // ── Cookie Refresh Panel ───────────────────────────────────────────────────
-  cookieRefreshPanel: {
-    marginTop: 16,
-    background: '#0e0e11',
-    border: '1px solid #27272a',
-    borderRadius: 10,
-    padding: '14px 16px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 10,
-  },
-  cookieRefreshHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap' as const,
-    gap: 10,
-  },
-  cookieRefreshTitle: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: '#d4d4d8',
-    letterSpacing: '0.02em',
-  },
-  cookieRefreshBadge: {
-    fontSize: 10,
-    fontWeight: 700,
-    background: 'rgba(139,92,246,0.15)',
-    border: '1px solid rgba(139,92,246,0.35)',
-    color: '#c4b5fd',
-    borderRadius: 4,
-    padding: '2px 7px',
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase' as const,
-  },
-  cookieRefreshBtn: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 7,
-    background: 'linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%)',
-    border: '1px solid #7c3aed',
-    borderRadius: 7,
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: 700,
-    padding: '7px 14px',
-    transition: 'all 0.2s ease',
-    whiteSpace: 'nowrap' as const,
-    boxShadow: '0 2px 8px rgba(109, 40, 217, 0.4)',
-  },
-  cookieSpinner: {
-    display: 'inline-block',
-    width: 12,
-    height: 12,
-    border: '2px solid rgba(255,255,255,0.3)',
-    borderTopColor: '#ffffff',
-    borderRadius: '50%',
-    animation: 'spin 0.7s linear infinite',
-  },
-  cookieStatusMsg: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 8,
-    padding: '10px 12px',
-    borderRadius: 7,
-    border: '1px solid',
-    fontSize: 12,
-    lineHeight: 1.5,
-  },
-  cookieLocalGuide: {
-    background: 'rgba(245,158,11,0.06)',
-    border: '1px solid rgba(245,158,11,0.2)',
-    borderRadius: 7,
-    padding: '10px 12px',
-    fontSize: 12,
-  },
-  cookieGuideCode: {
-    display: 'block',
-    background: '#18181b',
-    border: '1px solid #27272a',
-    borderRadius: 5,
-    padding: '6px 10px',
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-    fontSize: 12,
-    color: '#86efac',
-    marginTop: 4,
-  },
-  cookieRefreshHint: {
-    fontSize: 11,
-    color: '#52525b',
-    lineHeight: 1.5,
   },
 };
 

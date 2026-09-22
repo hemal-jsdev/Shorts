@@ -63,6 +63,8 @@ async function readStreamToBuffer(stream: any): Promise<Buffer> {
 }
 
 import { Innertube, Platform, ClientType } from 'youtubei.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // Configure JavaScript evaluator required by youtubei.js to decipher video URLs
 try {
@@ -71,6 +73,24 @@ try {
   };
 } catch (err: any) {
   console.warn('[YouTube Import] Platform.shim.eval setup warning:', err?.message);
+}
+
+function getYouTubeCookie(): string | undefined {
+  if (process.env.YOUTUBE_COOKIE?.trim()) {
+    return process.env.YOUTUBE_COOKIE.trim();
+  }
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/YOUTUBE_COOKIE=["']([^"']+)["']/);
+      if (match && match[1]) {
+        process.env.YOUTUBE_COOKIE = match[1];
+        return match[1];
+      }
+    }
+  } catch (_) {}
+  return undefined;
 }
 
 export async function POST(req: Request) {
@@ -171,9 +191,11 @@ export async function POST(req: Request) {
 
       for (const clientType of clientCandidates) {
         try {
+          const ytCookie = getYouTubeCookie();
           const yt = await Innertube.create({
             client_type: clientType,
             generate_session_locally: true,
+            ...(ytCookie ? { cookie: ytCookie } : {}),
           });
 
           // Attempt to enrich duration / quality from basic info if permitted

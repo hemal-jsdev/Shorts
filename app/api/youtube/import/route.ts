@@ -171,9 +171,11 @@ export async function POST(req: Request) {
 
       for (const clientType of clientCandidates) {
         try {
+          const ytCookie = process.env.YOUTUBE_COOKIE;
           const yt = await Innertube.create({
             client_type: clientType,
             generate_session_locally: true,
+            ...(ytCookie ? { cookie: ytCookie } : {}),
           });
 
           // Attempt to enrich duration / quality from basic info if permitted

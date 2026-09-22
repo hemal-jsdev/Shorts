@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getPayload } from 'payload';
+import { getPayload, handleEndpoints } from 'payload';
 import config from '@payload-config';
 
 export async function GET(
@@ -47,4 +47,92 @@ export async function GET(
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+}
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  try {
+    const response = await handleEndpoints({
+      config,
+      path: `/api/reels/${id}`,
+      request: req,
+    });
+    if (response) return response;
+
+    const payload = await getPayload({ config });
+    const result = await payload.delete({
+      collection: 'reels',
+      id,
+    });
+
+    return NextResponse.json({
+      message: 'Reel deleted successfully.',
+      doc: result,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { errors: [{ message: error?.message || 'Failed to delete reel' }] },
+      { status: error?.status || 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  try {
+    const response = await handleEndpoints({
+      config,
+      path: `/api/reels/${id}`,
+      request: req,
+    });
+    if (response) return response;
+
+    const body = await req.json().catch(() => ({}));
+    const payload = await getPayload({ config });
+    const result = await payload.update({
+      collection: 'reels',
+      id,
+      data: body,
+    });
+
+    return NextResponse.json({
+      message: 'Reel updated successfully.',
+      doc: result,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { errors: [{ message: error?.message || 'Failed to update reel' }] },
+      { status: error?.status || 500 }
+    );
+  }
+}
+
+export async function PUT(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  return handleEndpoints({
+    config,
+    path: `/api/reels/${id}`,
+    request: req,
+  });
+}
+
+export async function OPTIONS(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  return handleEndpoints({
+    config,
+    path: `/api/reels/${id}`,
+    request: req,
+  });
 }

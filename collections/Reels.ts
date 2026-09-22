@@ -7,6 +7,7 @@ export const Reels: CollectionConfig = {
     defaultColumns: ['caption', 'author', 'status', 'hlsUrl', 'createdAt'],
     description: 'Manage short-form videos with Cloudflare Stream adaptive video streaming.',
   },
+  defaultSort: '-createdAt',
   access: {
     read: () => true,
     create: () => true,
@@ -91,6 +92,29 @@ export const Reels: CollectionConfig = {
         }
 
         return data;
+      },
+    ],
+    afterDelete: [
+      async ({ doc }) => {
+        if (doc?.streamUid && doc?.videoSource !== 'youtube') {
+          try {
+            const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+            const apiToken = process.env.CLOUDFLARE_STREAM_API_TOKEN;
+            if (accountId && apiToken) {
+              await fetch(
+                `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${doc.streamUid}`,
+                {
+                  method: 'DELETE',
+                  headers: {
+                    Authorization: `Bearer ${apiToken}`,
+                  },
+                }
+              );
+            }
+          } catch (err) {
+            console.warn('Cloudflare stream cleanup failed:', err);
+          }
+        }
       },
     ],
   },

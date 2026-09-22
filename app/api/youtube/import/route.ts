@@ -255,28 +255,13 @@ export async function POST(req: Request) {
         animatedWebpUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.gif`;
         console.log(`[YouTube Import] ✅ Successfully uploaded to Cloudflare Stream (UID: ${streamUid})`);
       } else {
-        // Without Cloudflare credentials, link directly
-        isDirectYouTube = true;
-        hlsUrl = `https://www.youtube.com/shorts/${videoId}`;
-        streamUid = videoId;
+        throw new Error('Cloudflare Stream credentials are missing in the server environment.');
       }
     } catch (ingestErr: any) {
-      console.warn(
-        `[YouTube Import] ⚠️ Serverless transcode bypassed (${ingestErr?.message || 'Download error'}). Switching to Direct YouTube Stream.`
+      console.error('[YouTube Import] Cloudflare ingestion failed:', ingestErr);
+      throw new Error(
+        `Cloudflare Stream Ingestion Failed: ${ingestErr?.message || 'Failed to download or transcode YouTube video.'}`
       );
-      // Graceful fallback when YouTube bot protection restricts datacenter IP ("Video is login required", etc.)
-      const oembedMeta = await fetchOEmbedMetadata(videoId);
-      rawTitle = rawTitle || oembedMeta.title;
-      channelName = channelName !== 'YouTube Creator' ? channelName : oembedMeta.authorName;
-      thumbnailUrl = oembedMeta.thumbnailUrl || thumbnailUrl;
-      animatedWebpUrl = thumbnailUrl;
-      hlsUrl = `https://www.youtube.com/shorts/${videoId}`;
-      streamUid = videoId;
-      isDirectYouTube = true;
-      fallbackNotice =
-        ingestErr?.message?.includes('login')
-          ? 'YouTube anti-bot protection restricted cloud server download. Seamlessly switched to Direct YouTube Stream!'
-          : 'Transcode bypassed. Successfully linked via Direct YouTube Stream!';
     }
 
     // ── Document Creation (if requested) ─────────────────────────────────────

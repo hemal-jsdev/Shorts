@@ -1,7 +1,15 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useField } from '@payloadcms/ui';
+import {
+  useField,
+  useForm,
+  useFormProcessing,
+  useFormSubmitted,
+  useDocumentInfo,
+  toast,
+} from '@payloadcms/ui';
+import { useRouter } from 'next/navigation';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +114,87 @@ export const CloudflareVideoUpload: React.FC = () => {
     path: 'status',
   });
 
+  // Navigation and Form Submission Hooks
+  const router = useRouter();
+  const isFormProcessing = useFormProcessing();
+  const isFormSubmitted = useFormSubmitted();
+  const { submit } = useForm();
+  const docInfo = useDocumentInfo();
+
+  // Track if this session originated on the create route
+  const isCreateModeRef = useRef<boolean>(false);
+  const wasProcessingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const pathname = window.location.pathname;
+      const isCreate =
+        pathname.endsWith('/create') ||
+        pathname.includes('/reels/create') ||
+        (!docInfo?.id && !docInfo?.isEditing);
+      isCreateModeRef.current = isCreate;
+    }
+  }, [docInfo?.id, docInfo?.isEditing]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const justCreated = window.sessionStorage.getItem('payload_reel_just_created');
+      if (justCreated) {
+        window.sessionStorage.removeItem('payload_reel_just_created');
+        window.sessionStorage.removeItem('payload-pending-success-toast');
+        toast.success('🎉 Reel published successfully !!');
+        router.replace('/admin/collections/reels');
+        router.refresh();
+      }
+    }
+  }, [router]);
+
+  // Listen for create form submission completion
+  useEffect(() => {
+    if (!isCreateModeRef.current) return;
+
+    if (isFormProcessing) {
+      wasProcessingRef.current = true;
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('payload_reel_just_created', 'true');
+      }
+    } else if (wasProcessingRef.current) {
+      wasProcessingRef.current = false;
+
+      const timer = setTimeout(() => {
+        if (typeof window !== 'undefined') {
+          const hasToast = window.sessionStorage.getItem('payload-pending-success-toast');
+          const hasDocId = Boolean(docInfo?.id);
+
+          if (hasToast || hasDocId) {
+            window.sessionStorage.removeItem('payload_reel_just_created');
+            window.sessionStorage.removeItem('payload-pending-success-toast');
+            toast.success('🎉 Reel published successfully !!');
+            router.replace('/admin/collections/reels');
+            router.refresh();
+          } else {
+            window.sessionStorage.removeItem('payload_reel_just_created');
+          }
+        }
+      }, 120);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isFormProcessing, docInfo?.id, router]);
+
+  const handleSaveAndRedirect = async () => {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem('payload_reel_just_created', 'true');
+    }
+    try {
+      if (typeof submit === 'function') {
+        await submit();
+      }
+    } catch (err) {
+      console.error('Save error:', err);
+    }
+  };
+
   // Active Mode: 'youtube' | 'file'
   const [activeTab, setActiveTab] = useState<'youtube' | 'file'>('youtube');
   const [isReplacing, setIsReplacing] = useState<boolean>(false);
@@ -197,29 +286,27 @@ export const CloudflareVideoUpload: React.FC = () => {
   }, [youtubeUrl, activeTab, captionValue, setCaption]);
 
   // ── Handle YouTube Shorts Automated Ingestion ──────────────────────────────
-  const handleYouTubeImport = async (directMode = false) => {
+  const handleYouTubeImport = async () => {
     if (!youtubeUrl.trim()) return;
 
     setState({
       status: 'uploading',
-      progress: directMode ? 75 : 25,
+      progress: 25,
       streamUid: null,
       hlsUrl: null,
       thumbnailUrl: null,
       errorMessage: null,
-      fileName: directMode ? 'YouTube Short (Instant Stream)' : 'YouTube Short (1080p Remux)',
+      fileName: 'YouTube Short (Cloudflare Ingest)',
       fileSize: null,
     });
-    setYtStep(directMode ? 2 : 1);
+    setYtStep(1);
     setImportNotice(null);
 
     try {
-      if (!directMode) {
-        setTimeout(() => {
-          setYtStep(2);
-          setState((prev) => ({ ...prev, progress: 65 }));
-        }, 1800);
-      }
+      setTimeout(() => {
+        setYtStep(2);
+        setState((prev) => ({ ...prev, progress: 65 }));
+      }, 1800);
 
       const res = await fetch('/api/youtube/import', {
         method: 'POST',
@@ -227,7 +314,7 @@ export const CloudflareVideoUpload: React.FC = () => {
         body: JSON.stringify({
           url: youtubeUrl.trim(),
           caption: captionValue || ytPreview?.title || '',
-          directMode,
+          directMode: false,
         }),
       });
 
@@ -241,15 +328,15 @@ export const CloudflareVideoUpload: React.FC = () => {
 
       // Populate Payload CMS form fields automatically
       setStreamUid(data.streamUid);
-      setVideoSource(data.videoSource || (data.isDirectYouTube ? 'youtube' : 'cloudflare'));
+      setVideoSource(data.videoSource || 'cloudflare');
       setHlsUrl(data.hlsUrl);
       if (data.thumbnailUrl) setThumbnailUrl(data.thumbnailUrl);
       if (data.animatedWebpUrl) setAnimatedWebpUrl(data.animatedWebpUrl);
       if (data.caption && !captionValue) setCaption(data.caption);
       setStatus('ready');
 
-      if (notice || data.isDirectYouTube) {
-        setImportNotice(notice || 'Imported via High-Speed Direct YouTube Stream (Lossless 1080p).');
+      if (notice) {
+        setImportNotice(notice);
       }
 
       setState({
@@ -259,17 +346,16 @@ export const CloudflareVideoUpload: React.FC = () => {
         hlsUrl: data.hlsUrl,
         thumbnailUrl: data.thumbnailUrl,
         errorMessage: null,
-        fileName: `${data.caption || 'YouTube Short'} (${data.quality || '1080p'})`,
+        fileName: `${data.caption || 'YouTube Short'} (${data.quality || 'Cloudflare Stream'})`,
         fileSize: null,
       });
       setIsReplacing(false);
     } catch (err: any) {
       console.error('YouTube import error in CMS:', err);
       setYtStep(0);
-      let msg = err.message || 'Failed to import YouTube Short. Please verify the URL.';
-      if (msg.toLowerCase().includes('login') || msg.toLowerCase().includes('bot')) {
-        msg = 'YouTube Bot Protection: YouTube restricts automated server downloads from cloud hosting providers. Click "⚡ Instant Direct Stream" below to link this Short instantly.';
-      }
+      const msg =
+        err.message ||
+        'Failed to import YouTube Short into Cloudflare Stream. Please verify the URL and try again.';
       setState((prev) => ({
         ...prev,
         status: 'error',
@@ -529,11 +615,38 @@ export const CloudflareVideoUpload: React.FC = () => {
             </div>
           </div>
 
-          {/* Card Footer Note */}
+          {/* Card Footer Note & Action */}
           <div style={styles.cardFooter}>
             <span style={styles.footerNote}>
-              ✓ Video stream is configured and synced with form fields. Click <strong>Save</strong> above to finalize and publish.
+              ✓ Video stream is configured and synced with form fields.{' '}
+              {isCreateModeRef.current
+                ? 'Save below or use the top Save button to publish and view in All Reels.'
+                : 'Click Save above to update this reel.'}
             </span>
+            {isCreateModeRef.current && (
+              <button
+                type="button"
+                onClick={handleSaveAndRedirect}
+                disabled={isFormProcessing}
+                style={{
+                  ...styles.saveAndRedirectBtn,
+                  opacity: isFormProcessing ? 0.7 : 1,
+                  cursor: isFormProcessing ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {isFormProcessing ? (
+                  <>
+                    <span style={styles.spinIcon}>⏳</span>
+                    <span>Publishing...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🚀</span>
+                    <span>Save &amp; View All Reels</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -614,15 +727,6 @@ export const CloudflareVideoUpload: React.FC = () => {
               <span style={{ fontSize: 16 }}>⚠️</span>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span>{state.errorMessage}</span>
-                {state.errorMessage?.includes('Instant Direct Stream') && (
-                  <button
-                    type="button"
-                    onClick={() => handleYouTubeImport(true)}
-                    style={styles.quickFixBtn}
-                  >
-                    ⚡ Switch to Instant Direct Stream
-                  </button>
-                )}
               </div>
               <button
                 type="button"
@@ -713,7 +817,7 @@ export const CloudflareVideoUpload: React.FC = () => {
               </div>
 
               <p style={styles.helperText}>
-                Select <strong>Instant Direct Stream</strong> for instant connection, or <strong>Cloudflare Ingest</strong> to transcode.
+                Paste any YouTube Shorts link to download and transcode it directly into your <strong>Cloudflare Stream</strong> library.
               </p>
 
               {/* Instant Metadata Preview Card */}
@@ -736,41 +840,31 @@ export const CloudflareVideoUpload: React.FC = () => {
                       {ytPreview.title}
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
-                      <span style={styles.badgeGreen}>Ready for Instant Stream</span>
+                      <span style={styles.badgeGreen}>Ready for Cloudflare Ingest</span>
                       <span style={styles.badgePill}>Multi-bitrate Lossless</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Action Buttons */}
-              <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {/* Action Button: Single Cloudflare Stream Button */}
+              <div style={{ marginTop: 14 }}>
                 <button
                   type="button"
-                  disabled={!youtubeUrl.trim() || isFetchingMeta}
-                  onClick={() => handleYouTubeImport(true)}
+                  disabled={!youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading'}
+                  onClick={() => handleYouTubeImport()}
                   style={{
-                    ...styles.importDirectBtn,
-                    opacity: !youtubeUrl.trim() || isFetchingMeta ? 0.5 : 1,
-                    cursor: !youtubeUrl.trim() || isFetchingMeta ? 'not-allowed' : 'pointer',
+                    ...styles.importCloudflareBtn,
+                    opacity: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 0.55 : 1,
+                    cursor: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 'not-allowed' : 'pointer',
                   }}
                 >
-                  <span>⚡</span>
-                  <span>Instant Direct Stream (Recommended)</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={!youtubeUrl.trim() || isFetchingMeta}
-                  onClick={() => handleYouTubeImport(false)}
-                  style={{
-                    ...styles.importTranscodeBtn,
-                    opacity: !youtubeUrl.trim() || isFetchingMeta ? 0.5 : 1,
-                    cursor: !youtubeUrl.trim() || isFetchingMeta ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  <span>☁️</span>
-                  <span>Cloudflare Ingest</span>
+                  <span style={{ fontSize: 16 }}>☁️</span>
+                  <span>
+                    {state.status === 'uploading'
+                      ? 'Importing to Cloudflare Stream...'
+                      : 'Import to Cloudflare Stream'}
+                  </span>
                 </button>
               </div>
             </div>
@@ -990,6 +1084,24 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   // ── Action Buttons ────────────────────────────────────────────────────────
+  importCloudflareBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    width: '100%',
+    padding: '13px 22px',
+    background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+    border: '1px solid rgba(249, 115, 22, 0.4)',
+    borderRadius: 8,
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: 700,
+    letterSpacing: '0.01em',
+    boxShadow: '0 4px 14px rgba(249, 115, 22, 0.35)',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
   importDirectBtn: {
     display: 'flex',
     alignItems: 'center',
@@ -1396,13 +1508,36 @@ const styles: Record<string, React.CSSProperties> = {
   cardFooter: {
     background: '#141416',
     borderTop: '1px solid #1f1f23',
-    padding: '10px 16px',
-    fontSize: 12,
+    padding: '12px 18px',
+    fontSize: 13,
     color: '#a1a1aa',
-    lineHeight: 1.4,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+    flexWrap: 'wrap',
   },
   footerNote: {
-    display: 'block',
+    flex: '1 1 240px',
+    lineHeight: 1.4,
+  },
+  saveAndRedirectBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+    border: '1px solid #818cf8',
+    borderRadius: 8,
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 700,
+    padding: '8px 18px',
+    boxShadow: '0 2px 10px rgba(99, 102, 241, 0.35)',
+    transition: 'all 0.2s ease',
+    whiteSpace: 'nowrap',
+  },
+  spinIcon: {
+    display: 'inline-block',
   },
 };
 

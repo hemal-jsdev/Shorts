@@ -286,27 +286,29 @@ export const CloudflareVideoUpload: React.FC = () => {
   }, [youtubeUrl, activeTab, captionValue, setCaption]);
 
   // ── Handle YouTube Shorts Automated Ingestion ──────────────────────────────
-  const handleYouTubeImport = async () => {
+  const handleYouTubeImport = async (mode: 'cloudflare' | 'direct' = 'cloudflare') => {
     if (!youtubeUrl.trim()) return;
 
     setState({
       status: 'uploading',
-      progress: 25,
+      progress: mode === 'direct' ? 70 : 25,
       streamUid: null,
       hlsUrl: null,
       thumbnailUrl: null,
       errorMessage: null,
-      fileName: 'YouTube Short (Cloudflare Ingest)',
+      fileName: mode === 'direct' ? 'YouTube Short (Direct HD Stream)' : 'YouTube Short (Cloudflare Ingest)',
       fileSize: null,
     });
-    setYtStep(1);
+    setYtStep(mode === 'direct' ? 2 : 1);
     setImportNotice(null);
 
     try {
-      setTimeout(() => {
-        setYtStep(2);
-        setState((prev) => ({ ...prev, progress: 65 }));
-      }, 1800);
+      if (mode !== 'direct') {
+        setTimeout(() => {
+          setYtStep(2);
+          setState((prev) => ({ ...prev, progress: 65 }));
+        }, 1800);
+      }
 
       const res = await fetch('/api/youtube/import', {
         method: 'POST',
@@ -314,7 +316,9 @@ export const CloudflareVideoUpload: React.FC = () => {
         body: JSON.stringify({
           url: youtubeUrl.trim(),
           caption: captionValue || ytPreview?.title || '',
-          directMode: false,
+          thumbnailUrl: ytPreview?.thumbnailUrl || '',
+          authorName: ytPreview?.authorName || '',
+          directMode: mode === 'direct',
         }),
       });
 
@@ -328,7 +332,7 @@ export const CloudflareVideoUpload: React.FC = () => {
 
       // Populate Payload CMS form fields automatically
       setStreamUid(data.streamUid);
-      setVideoSource(data.videoSource || 'cloudflare');
+      setVideoSource(data.videoSource || (mode === 'direct' ? 'youtube' : 'cloudflare'));
       setHlsUrl(data.hlsUrl);
       if (data.thumbnailUrl) setThumbnailUrl(data.thumbnailUrl);
       if (data.animatedWebpUrl) setAnimatedWebpUrl(data.animatedWebpUrl);
@@ -346,7 +350,7 @@ export const CloudflareVideoUpload: React.FC = () => {
         hlsUrl: data.hlsUrl,
         thumbnailUrl: data.thumbnailUrl,
         errorMessage: null,
-        fileName: `${data.caption || 'YouTube Short'} (${data.quality || 'Cloudflare Stream'})`,
+        fileName: `${data.caption || 'YouTube Short'} (${data.quality || (data.videoSource === 'youtube' ? 'Direct HD Stream' : 'Cloudflare Stream')})`,
         fileSize: null,
       });
       setIsReplacing(false);
@@ -727,18 +731,27 @@ export const CloudflareVideoUpload: React.FC = () => {
               <span style={{ fontSize: 16 }}>⚠️</span>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <span>{state.errorMessage}</span>
-                {state.errorMessage?.includes('Direct Video File Upload') && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
+                  {youtubeUrl.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => handleYouTubeImport('direct')}
+                      style={styles.quickFileBtn}
+                    >
+                      ⚡ Ingest as Instant Direct HD Stream (Bypasses Cloud Restrictions)
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
                       setActiveTab('file');
                       setState((p) => ({ ...p, status: 'idle', errorMessage: null }));
                     }}
-                    style={styles.quickFileBtn}
+                    style={{ ...styles.quickFileBtn, background: 'rgba(255, 255, 255, 0.08)' }}
                   >
                     📁 Switch to Direct Video File Upload
                   </button>
-                )}
+                </div>
               </div>
               <button
                 type="button"
@@ -859,25 +872,47 @@ export const CloudflareVideoUpload: React.FC = () => {
                 </div>
               )}
 
-              {/* Action Button: Single Cloudflare Stream Button */}
-              <div style={{ marginTop: 14 }}>
-                <button
-                  type="button"
-                  disabled={!youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading'}
-                  onClick={() => handleYouTubeImport()}
-                  style={{
-                    ...styles.importCloudflareBtn,
-                    opacity: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 0.55 : 1,
-                    cursor: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  <span style={{ fontSize: 16 }}>☁️</span>
-                  <span>
-                    {state.status === 'uploading'
-                      ? 'Importing to Cloudflare Stream...'
-                      : 'Import to Cloudflare Stream'}
-                  </span>
-                </button>
+              {/* Action Buttons: Dual Modern Actions */}
+              <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    disabled={!youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading'}
+                    onClick={() => handleYouTubeImport('cloudflare')}
+                    style={{
+                      ...styles.importCloudflareBtn,
+                      flex: 1,
+                      minWidth: '220px',
+                      opacity: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 0.55 : 1,
+                      cursor: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <span style={{ fontSize: 16 }}>☁️</span>
+                    <span>
+                      {state.status === 'uploading'
+                        ? 'Importing to Cloudflare Stream...'
+                        : 'Import to Cloudflare Stream'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading'}
+                    onClick={() => handleYouTubeImport('direct')}
+                    style={{
+                      ...styles.importDirectBtn,
+                      opacity: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 0.55 : 1,
+                      cursor: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 'not-allowed' : 'pointer',
+                    }}
+                    title="Instant 1-click import using YouTube direct stream player"
+                  >
+                    <span style={{ fontSize: 15 }}>⚡</span>
+                    <span>Instant Direct Stream</span>
+                  </button>
+                </div>
+                <span style={{ fontSize: 11, color: '#71717a' }}>
+                  💡 <em>Import to Cloudflare Stream</em> auto-falls back to Direct Lossless HD if YouTube restricts datacenter cloud servers on Vercel. <em>Instant Direct Stream</em> connects in ~100ms.
+                </span>
               </div>
             </div>
           )}

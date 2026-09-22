@@ -1,17 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getPayload } from 'payload';
 import config from '@payload-config';
-// @ts-ignore
-import { Innertube, Platform, ClientType } from 'youtubei.js';
-// @ts-ignore
-import ffmpegPath from 'ffmpeg-static';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs/promises';
-import path from 'path';
-import os from 'os';
-
-const execFileAsync = promisify(execFile);
+import axios from 'axios';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // Allow sufficient time for high-res download & upload
@@ -24,20 +14,39 @@ function extractYouTubeId(url: string): string | null {
   return match ? match[1] : null;
 }
 
-async function streamToFile(stream: any, filePath: string): Promise<void> {
-  const reader = stream.getReader();
-  const handle = await fs.open(filePath, 'w');
+async function fetchOEmbedMetadata(videoId: string) {
+  const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+  let title = 'YouTube Short';
+  let authorName = 'YouTube Creator';
+  let authorUrl = `https://www.youtube.com/@creator`;
+  let thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        await handle.write(value);
+    const res = await axios.get(oembedUrl, { timeout: 6000 });
+    if (res.data) {
+      title = res.data.title || title;
+      authorName = res.data.author_name || authorName;
+      authorUrl = res.data.author_url || authorUrl;
+      if (res.data.thumbnail_url) {
+        thumbnailUrl = res.data.thumbnail_url;
       }
     }
-  } finally {
-    await handle.close();
+  } catch (err: any) {
+    console.warn('[YouTube Meta] oEmbed fetch warning:', err.message);
   }
+
+  // Try high-res thumbnail check
+  const maxResUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+  try {
+    const headCheck = await axios.head(maxResUrl, { timeout: 3000 });
+    if (headCheck.status === 200) {
+      thumbnailUrl = maxResUrl;
+    }
+  } catch (_) {
+    // Keep standard thumbnail
+  }
+
+  return { title, authorName, authorUrl, thumbnailUrl };
 }
 
 async function readStreamToBuffer(stream: any): Promise<Buffer> {
@@ -53,11 +62,27 @@ async function readStreamToBuffer(stream: any): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+async function loadInnertube() {
+  try {
+    // Dynamic import to prevent bundler failure when youtubei.js is missing or in serverless environments
+    const mod = await (Function('return import("youtubei.js")')() as Promise<any>);
+    return {
+      Innertube: mod.Innertube,
+      Platform: mod.Platform,
+      ClientType: mod.ClientType,
+    };
+  } catch (err: any) {
+    console.warn('[YouTube Import] Innertube library unavailable:', err.message);
+    return null;
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
     const rawUrl: string = body.url || '';
     const customCaption: string = body.caption || '';
+    const directMode: boolean = Boolean(body.directMode);
 
     if (!rawUrl) {
       return NextResponse.json({ error: 'YouTube URL is required' }, { status: 400 });
@@ -71,135 +96,190 @@ export async function POST(req: Request) {
       );
     }
 
-    // ── 1. Configure Innertube Engine ───────────────────────────────────────
-    Platform.shim.eval = (data: any) => new Function(data.output)();
-    
-    // ANDROID client provides reliable, high-speed streaming without cipher-throttling
-    let yt = await Innertube.create({
-      client_type: ClientType.ANDROID,
-      generate_session_locally: true,
-    });
+    // ── Direct Mode: Instant Stream Linking (Zero Server Download, 100% Reliable) ──
+    if (directMode) {
+      console.log(`[YouTube Import] ⚡ Instant direct mode requested for ID: ${videoId}`);
+      const meta = await fetchOEmbedMetadata(videoId);
+      const title = customCaption.trim() || meta.title;
 
-    // ── 2. Retrieve YouTube Metadata ─────────────────────────────────────────
-    const info = await yt.getBasicInfo(videoId);
-    const basic = info.basic_info;
+      let createdDocId: string | null = null;
+      if (body.createDocument) {
+        const payload = await getPayload({ config });
+        const users = await payload.find({ collection: 'users', limit: 1 });
+        const authorId = users.docs[0]?.id || '6aab8a67467d4a0bf899e129';
 
-    const rawTitle = customCaption.trim() || basic.title || 'YouTube Short';
-    const channelName = basic.author || 'YouTube Creator';
-    const durationSeconds = basic.duration || 60;
+        const newReel = await payload.create({
+          collection: 'reels',
+          data: {
+            caption: title,
+            videoSource: 'youtube',
+            streamUid: videoId,
+            hlsUrl: `https://www.youtube.com/shorts/${videoId}`,
+            thumbnailUrl: meta.thumbnailUrl,
+            animatedWebpUrl: meta.thumbnailUrl,
+            author: authorId,
+            status: 'ready',
+          },
+        });
+        createdDocId = String(newReel.id);
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          id: createdDocId,
+          caption: title,
+          videoSource: 'youtube',
+          streamUid: videoId,
+          hlsUrl: `https://www.youtube.com/shorts/${videoId}`,
+          thumbnailUrl: meta.thumbnailUrl,
+          animatedWebpUrl: meta.thumbnailUrl,
+          durationSeconds: 60,
+          authorName: meta.authorName,
+          quality: 'Direct HD Stream',
+          isDirectYouTube: true,
+        },
+      });
+    }
+
+    // ── Transcode Mode: Attempt Cloudflare Ingestion with Graceful Fallback ────
     const streamDomain = process.env.CLOUDFLARE_STREAM_DOMAIN || 'videodelivery.net';
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const apiToken = process.env.CLOUDFLARE_STREAM_API_TOKEN;
+    const hasValidCredentials = Boolean(accountId && apiToken && !accountId.includes('your_'));
 
-    console.log(`[YouTube Import] 🎬 Ingesting Short: "${rawTitle}" (ID: ${videoId})`);
-
-    // ── 3. High-Quality Video Stream Download ─────────────────────────────────
-    let videoBuffer: Buffer;
+    let rawTitle = customCaption.trim();
+    let channelName = 'YouTube Creator';
+    let durationSeconds = 60;
+    let thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    let animatedWebpUrl = thumbnailUrl;
+    let streamUid: string = videoId;
+    let hlsUrl: string = `https://www.youtube.com/shorts/${videoId}`;
     let detectedQuality = 'HD';
+    let isDirectYouTube = false;
+    let fallbackNotice: string | null = null;
 
-    console.log('[YouTube Import] 📥 Downloading pristine video stream...');
     try {
-      const stream = await yt.download(videoId, {
-        type: 'video+audio',
-        quality: 'best',
-        format: 'any',
-      });
-      videoBuffer = await readStreamToBuffer(stream);
-      console.log(
-        `[YouTube Import] 📦 Download complete: ${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB`
-      );
-    } catch (androidErr: any) {
-      // Graceful fallback to MWEB client if Android client encounters unexpected response
-      console.log('[YouTube Import] Fallback to MWEB streaming pipeline...');
-      const ytMweb = await Innertube.create({
-        client_type: ClientType.MWEB,
+      const innertubePkg = await loadInnertube();
+      if (!innertubePkg) {
+        throw new Error('Innertube library not available in environment');
+      }
+
+      const { Innertube, Platform, ClientType } = innertubePkg;
+      Platform.shim.eval = (data: any) => new Function(data.output)();
+      const yt = await Innertube.create({
+        client_type: ClientType.ANDROID,
         generate_session_locally: true,
       });
-      const mwebStream = await ytMweb.download(videoId, {
-        type: 'video+audio',
-        quality: 'best',
-        format: 'any',
-      });
-      videoBuffer = await readStreamToBuffer(mwebStream);
-      console.log(
-        `[YouTube Import] 📦 Download complete: ${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB`
-      );
-    }
 
-    // ── 4. Upload to Cloudflare Stream ────────────────────────────────────────
-    let streamUid: string;
-    let hlsUrl: string;
-    let thumbnailUrl: string;
-    let animatedWebpUrl: string;
+      const info = await yt.getBasicInfo(videoId);
+      const basic = info.basic_info;
 
-    const hasValidCredentials = accountId && apiToken && !accountId.includes('your_');
+      rawTitle = rawTitle || basic.title || 'YouTube Short';
+      channelName = basic.author || 'YouTube Creator';
+      durationSeconds = basic.duration || 60;
+      thumbnailUrl = basic.thumbnail?.[0]?.url || thumbnailUrl;
 
-    if (hasValidCredentials) {
-      console.log('[YouTube Import] ☁️ Uploading to Cloudflare Stream...');
-      
-      // Request Direct Upload URL from Cloudflare Stream
-      const directUploadRes = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/direct_upload`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            maxDurationSeconds: Math.max(durationSeconds, 60),
-            meta: {
-              name: rawTitle,
-              source: 'youtube-shorts-import',
-              youtubeId: videoId,
-              channelName,
+      console.log(`[YouTube Import] 📥 Downloading stream for ID: ${videoId}...`);
+      let videoBuffer: Buffer;
+      try {
+        const stream = await yt.download(videoId, {
+          type: 'video+audio',
+          quality: 'best',
+          format: 'any',
+        });
+        videoBuffer = await readStreamToBuffer(stream);
+      } catch (androidErr) {
+        console.log('[YouTube Import] Trying MWEB client stream fallback...');
+        const ytMweb = await Innertube.create({
+          client_type: ClientType.MWEB,
+          generate_session_locally: true,
+        });
+        const mwebStream = await ytMweb.download(videoId, {
+          type: 'video+audio',
+          quality: 'best',
+          format: 'any',
+        });
+        videoBuffer = await readStreamToBuffer(mwebStream);
+      }
+
+      if (hasValidCredentials) {
+        console.log('[YouTube Import] ☁️ Uploading to Cloudflare Stream...');
+        const directUploadRes = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/direct_upload`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiToken}`,
+              'Content-Type': 'application/json',
             },
-            requireSignedURLs: false,
-            allowedOrigins: ['*'],
-          }),
+            body: JSON.stringify({
+              maxDurationSeconds: Math.max(durationSeconds, 60),
+              meta: {
+                name: rawTitle,
+                source: 'youtube-shorts-import',
+                youtubeId: videoId,
+                channelName,
+              },
+              requireSignedURLs: false,
+              allowedOrigins: ['*'],
+            }),
+          }
+        );
+
+        if (!directUploadRes.ok) {
+          const errText = await directUploadRes.text();
+          throw new Error(`Cloudflare Direct Upload request failed: ${errText}`);
         }
+
+        const cfData = await directUploadRes.json();
+        const uploadUrl = cfData.result.uploadURL;
+        streamUid = cfData.result.uid;
+
+        const formData = new FormData();
+        const videoBlob = new Blob([new Uint8Array(videoBuffer)], { type: 'video/mp4' });
+        formData.append('file', videoBlob, `${videoId}.mp4`);
+
+        const uploadBinaryRes = await fetch(uploadUrl, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!uploadBinaryRes.ok) {
+          const uploadErr = await uploadBinaryRes.text();
+          throw new Error(`Failed to upload video binary to Cloudflare: ${uploadErr}`);
+        }
+
+        hlsUrl = `https://${streamDomain}/${streamUid}/manifest/video.m3u8`;
+        thumbnailUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.jpg?time=1s&height=720`;
+        animatedWebpUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.gif`;
+        console.log(`[YouTube Import] ✅ Successfully uploaded to Cloudflare Stream (UID: ${streamUid})`);
+      } else {
+        // Without Cloudflare credentials, link directly
+        isDirectYouTube = true;
+        hlsUrl = `https://www.youtube.com/shorts/${videoId}`;
+        streamUid = videoId;
+      }
+    } catch (ingestErr: any) {
+      console.warn(
+        `[YouTube Import] ⚠️ Serverless transcode bypassed (${ingestErr?.message || 'Download error'}). Switching to Direct YouTube Stream.`
       );
-
-      if (!directUploadRes.ok) {
-        const errText = await directUploadRes.text();
-        throw new Error(`Cloudflare Direct Upload request failed: ${errText}`);
-      }
-
-      const cfData = await directUploadRes.json();
-      const uploadUrl = cfData.result.uploadURL;
-      streamUid = cfData.result.uid;
-
-      // Upload binary payload to Cloudflare Stream Direct Upload endpoint
-      const formData = new FormData();
-      const videoBlob = new Blob([new Uint8Array(videoBuffer)], { type: 'video/mp4' });
-      formData.append('file', videoBlob, `${videoId}.mp4`);
-
-      const uploadBinaryRes = await fetch(uploadUrl, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!uploadBinaryRes.ok) {
-        const uploadErr = await uploadBinaryRes.text();
-        throw new Error(`Failed to upload video binary to Cloudflare: ${uploadErr}`);
-      }
-
-      hlsUrl = `https://${streamDomain}/${streamUid}/manifest/video.m3u8`;
-      thumbnailUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.jpg?time=1s&height=720`;
-      animatedWebpUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.gif`;
-
-      console.log(`[YouTube Import] ✅ Successfully uploaded to Cloudflare Stream (UID: ${streamUid})`);
-    } else {
-      // Dev / Demo Fallback when Cloudflare API credentials are not configured
-      streamUid = `yt_${videoId}_${Date.now()}`;
-      hlsUrl = `https://${streamDomain}/${streamUid}/manifest/video.m3u8`;
-      thumbnailUrl =
-        basic.thumbnail?.[0]?.url ||
-        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+      // Graceful fallback when YouTube bot protection restricts datacenter IP ("Video is login required", etc.)
+      const oembedMeta = await fetchOEmbedMetadata(videoId);
+      rawTitle = rawTitle || oembedMeta.title;
+      channelName = channelName !== 'YouTube Creator' ? channelName : oembedMeta.authorName;
+      thumbnailUrl = oembedMeta.thumbnailUrl || thumbnailUrl;
       animatedWebpUrl = thumbnailUrl;
+      hlsUrl = `https://www.youtube.com/shorts/${videoId}`;
+      streamUid = videoId;
+      isDirectYouTube = true;
+      fallbackNotice =
+        ingestErr?.message?.includes('login')
+          ? 'YouTube anti-bot protection restricted cloud server download. Seamlessly switched to Direct YouTube Stream!'
+          : 'Transcode bypassed. Successfully linked via Direct YouTube Stream!';
     }
 
-    // ── 5. Optional Document Creation (Default: Form population only) ─────────
+    // ── Document Creation (if requested) ─────────────────────────────────────
     let createdDocId: string | null = null;
     if (body.createDocument) {
       const payload = await getPayload({ config });
@@ -210,7 +290,7 @@ export async function POST(req: Request) {
         collection: 'reels',
         data: {
           caption: rawTitle,
-          videoSource: 'cloudflare',
+          videoSource: isDirectYouTube ? 'youtube' : 'cloudflare',
           streamUid,
           hlsUrl,
           thumbnailUrl,
@@ -224,9 +304,12 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
+      fallbackToDirectEmbed: isDirectYouTube,
+      notice: fallbackNotice,
       data: {
         id: createdDocId,
         caption: rawTitle,
+        videoSource: isDirectYouTube ? 'youtube' : 'cloudflare',
         streamUid,
         hlsUrl,
         thumbnailUrl,
@@ -234,12 +317,13 @@ export async function POST(req: Request) {
         durationSeconds,
         authorName: channelName,
         quality: detectedQuality,
+        isDirectYouTube,
       },
     });
   } catch (error: any) {
     console.error('[YouTube Import Route Error]', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to import YouTube Shorts video in high quality' },
+      { error: error.message || 'Failed to import YouTube Shorts video' },
       { status: 500 }
     );
   }

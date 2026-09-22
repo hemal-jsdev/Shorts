@@ -30,10 +30,25 @@ export const Reels: CollectionConfig = {
           } catch (_) {}
         }
 
-        const domain = process.env.CLOUDFLARE_STREAM_DOMAIN || 'videodelivery.net';
-        if (data.streamUid && (!data.hlsUrl || data.hlsUrl === 'pending')) {
-          data.hlsUrl = `https://${domain}/${data.streamUid}/manifest/video.m3u8`;
+        const isYouTube =
+          data.videoSource === 'youtube' ||
+          (data.hlsUrl && (data.hlsUrl.includes('youtube.com') || data.hlsUrl.includes('youtu.be')));
+
+        if (isYouTube) {
+          data.videoSource = 'youtube';
+          if (!data.thumbnailUrl && data.streamUid) {
+            data.thumbnailUrl = `https://i.ytimg.com/vi/${data.streamUid}/hqdefault.jpg`;
+          }
+          if (!data.animatedWebpUrl && data.thumbnailUrl) {
+            data.animatedWebpUrl = data.thumbnailUrl;
+          }
+        } else {
+          const domain = process.env.CLOUDFLARE_STREAM_DOMAIN || 'videodelivery.net';
+          if (data.streamUid && (!data.hlsUrl || data.hlsUrl === 'pending')) {
+            data.hlsUrl = `https://${domain}/${data.streamUid}/manifest/video.m3u8`;
+          }
         }
+
         if (!data.hlsUrl) {
           data.hlsUrl = 'pending';
         }
@@ -44,8 +59,20 @@ export const Reels: CollectionConfig = {
       async ({ data }) => {
         if (!data) return data;
 
-        // Automatically populate videoUrl, thumbnailUrl, and gifUrl from streamUid if needed
-        if (data.streamUid) {
+        const isYouTube =
+          data.videoSource === 'youtube' ||
+          (data.hlsUrl && (data.hlsUrl.includes('youtube.com') || data.hlsUrl.includes('youtu.be')));
+
+        if (isYouTube) {
+          data.videoSource = 'youtube';
+          if (!data.thumbnailUrl && data.streamUid) {
+            data.thumbnailUrl = `https://i.ytimg.com/vi/${data.streamUid}/hqdefault.jpg`;
+          }
+          if (!data.animatedWebpUrl && data.thumbnailUrl) {
+            data.animatedWebpUrl = data.thumbnailUrl;
+          }
+        } else if (data.streamUid) {
+          // Automatically populate videoUrl, thumbnailUrl, and gifUrl from streamUid for Cloudflare
           const domain = process.env.CLOUDFLARE_STREAM_DOMAIN || 'videodelivery.net';
           data.videoSource = 'cloudflare';
           if (!data.hlsUrl || data.hlsUrl === 'pending') {

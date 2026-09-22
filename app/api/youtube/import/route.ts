@@ -160,9 +160,14 @@ export async function POST(req: Request) {
     try {
       console.log(`[YouTube Import] 📥 Downloading stream for ID: ${videoId}...`);
       let videoBuffer: Buffer | null = null;
-      let lastDownloadErr: any = null;
+      let lastDownloadErr: any = null; // Multiple clients to maximize resilience against YouTube datacenter bot protection
 
-      const clientCandidates = [ClientType.MWEB, ClientType.ANDROID];
+      const clientCandidates = [
+        ClientType.MWEB,
+        ClientType.TV_EMBEDDED,
+        ClientType.ANDROID,
+        ClientType.WEB,
+      ];
 
       for (const clientType of clientCandidates) {
         try {
@@ -171,6 +176,7 @@ export async function POST(req: Request) {
             generate_session_locally: true,
           });
 
+          // Attempt to enrich duration / quality from basic info if permitted
           try {
             const info = await yt.getBasicInfo(videoId);
             const basic = info.basic_info;
@@ -181,6 +187,7 @@ export async function POST(req: Request) {
               thumbnailUrl = basic.thumbnail?.[0]?.url || thumbnailUrl;
             }
           } catch (_) {
+            // Ignore basic info restriction; oEmbed metadata is already set
           }
 
           const stream = await yt.download(videoId, {
@@ -201,7 +208,11 @@ export async function POST(req: Request) {
       }
 
       if (!videoBuffer || videoBuffer.length === 0) {
-        throw new Error(lastDownloadErr?.message || 'Failed to download YouTube video stream.');
+        let errMessage = lastDownloadErr?.message || 'Failed to download YouTube video stream.';
+        if (errMessage.toLowerCase().includes('login') || errMessage.toLowerCase().includes('bot')) {
+          errMessage = 'YouTube Bot Protection: YouTube is temporarily blocking automated server downloads from this cloud hosting region. Please retry in a moment, or upload directly via the "Direct Video File Upload" tab.';
+        }
+        throw new Error(errMessage);
       }
 
       if (hasValidCredentials) {
@@ -260,8 +271,13 @@ export async function POST(req: Request) {
       }
     } catch (ingestErr: any) {
       console.error('[YouTube Import] Cloudflare ingestion failed:', ingestErr);
-      throw new Error(
-        `Cloudflare Stream Ingestion Failed: ${ingestErr?.message || 'Failed to download or transcode YouTube video.'}`
+      let cleanMsg = ingestErr?.message || 'Failed to download or transcode YouTube video.';
+      if (cleanMsg.toLowerCase().includes('login') || cleanMsg.toLowerCase().includes('bot')) {
+        cleanMsg = 'YouTube Bot Protection: YouTube is temporarily restricting automated server downloads from this cloud hosting region. Please retry in a moment, or upload directly via the "Direct Video File Upload" tab.';
+      }
+      return NextResponse.json(
+        { error: cleanMsg },
+        { status: 500 }
       );
     }
 

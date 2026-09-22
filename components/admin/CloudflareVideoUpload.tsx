@@ -725,8 +725,20 @@ export const CloudflareVideoUpload: React.FC = () => {
           {state.status === 'error' && (
             <div style={styles.errorBanner}>
               <span style={{ fontSize: 16 }}>⚠️</span>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <span>{state.errorMessage}</span>
+                {state.errorMessage?.includes('Direct Video File Upload') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('file');
+                      setState((p) => ({ ...p, status: 'idle', errorMessage: null }));
+                    }}
+                    style={styles.quickFileBtn}
+                  >
+                    📁 Switch to Direct Video File Upload
+                  </button>
+                )}
               </div>
               <button
                 type="button"
@@ -1241,9 +1253,26 @@ const styles: Record<string, React.CSSProperties> = {
   errorDismiss: {
     background: 'none',
     border: 'none',
-    color: '#fca5a5',
-    cursor: 'pointer',
+    color: '#71717a',
     fontSize: 14,
+    cursor: 'pointer',
+    padding: '2px 6px',
+  },
+  quickFileBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    padding: '6px 14px',
+    background: '#1e293b',
+    border: '1px solid #3b82f6',
+    borderRadius: 6,
+    color: '#60a5fa',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
   },
   quickFixBtn: {
     alignSelf: 'flex-start',

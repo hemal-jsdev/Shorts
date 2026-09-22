@@ -62,19 +62,15 @@ async function readStreamToBuffer(stream: any): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-async function loadInnertube() {
-  try {
-    // Dynamic import to prevent bundler failure when youtubei.js is missing or in serverless environments
-    const mod = await (Function('return import("youtubei.js")')() as Promise<any>);
-    return {
-      Innertube: mod.Innertube,
-      Platform: mod.Platform,
-      ClientType: mod.ClientType,
-    };
-  } catch (err: any) {
-    console.warn('[YouTube Import] Innertube library unavailable:', err.message);
-    return null;
-  }
+import { Innertube, Platform, ClientType } from 'youtubei.js';
+
+// Configure JavaScript evaluator required by youtubei.js to decipher video URLs
+try {
+  Platform.shim.eval = (data: any, env: any = {}) => {
+    return new Function(...Object.keys(env), data.output)(...Object.values(env));
+  };
+} catch (err: any) {
+  console.warn('[YouTube Import] Platform.shim.eval setup warning:', err?.message);
 }
 
 export async function POST(req: Request) {
@@ -160,13 +156,6 @@ export async function POST(req: Request) {
     let fallbackNotice: string | null = null;
 
     try {
-      const innertubePkg = await loadInnertube();
-      if (!innertubePkg) {
-        throw new Error('Innertube library not available in environment');
-      }
-
-      const { Innertube, Platform, ClientType } = innertubePkg;
-      Platform.shim.eval = (data: any) => new Function(data.output)();
       const yt = await Innertube.create({
         client_type: ClientType.ANDROID,
         generate_session_locally: true,

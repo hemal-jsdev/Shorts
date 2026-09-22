@@ -16,7 +16,6 @@ export const api = axios.create({
 });
 
 export const reelsApi = {
-  // Sync live videos from Cloudflare Stream
   syncCloudflare: async (): Promise<{ success: boolean; message: string; reels: Reel[] }> => {
     try {
       const res = await api.get('/cloudflare/sync');
@@ -27,7 +26,6 @@ export const reelsApi = {
     }
   },
 
-  // Fetch paginated feed
   getFeed: async (cursor?: string, limit = 25): Promise<{ items: Reel[]; nextCursor: string | null; hasMore: boolean }> => {
     try {
       const res = await api.get('/reels/feed', {
@@ -45,19 +43,16 @@ export const reelsApi = {
   },
 
 
-  // Get single reel by ID
   getReelById: async (id: string): Promise<Reel> => {
     const res = await api.get(`/reels/${id}`);
     return res.data.doc || res.data.data || res.data;
   },
 
-  // Toggle like
   toggleLike: async (id: string): Promise<{ isLiked: boolean; likesCount: number }> => {
     const res = await api.post(`/reels/${id}/like`);
     return res.data.data;
   },
 
-  // Record watch view
   recordView: async (id: string, watchDurationMs: number, completed = false, quality = 'auto'): Promise<void> => {
     try {
       await api.post(`/reels/${id}/view`, {
@@ -68,7 +63,6 @@ export const reelsApi = {
     } catch (_) {}
   },
 
-  // Get comments
   getComments: async (id: string): Promise<Comment[]> => {
     try {
       const res = await api.get(`/reels/${id}/comments`);
@@ -93,19 +87,16 @@ export const reelsApi = {
     }
   },
 
-  // Add comment
   addComment: async (id: string, text: string, parentId?: string): Promise<Comment> => {
     const res = await api.post(`/reels/${id}/comments`, { text, parentId });
     return res.data.data;
   },
 
-  // Request Cloudflare Direct Upload URL
   getDirectUploadUrl: async (maxDurationSeconds = 60): Promise<{ uploadUrl: string; streamUid: string }> => {
     const res = await api.post('/reels/upload-url', { maxDurationSeconds });
     return res.data.data;
   },
 
-  // Publish reel after direct upload to Cloudflare
   publishReel: async (streamUid: string, caption?: string): Promise<Reel> => {
     const res = await api.post('/reels', {
       streamUid,
@@ -115,7 +106,6 @@ export const reelsApi = {
     return res.data.doc || res.data.data || res.data;
   },
 
-  // Fetch YouTube Shorts metadata for preview
   getYouTubeMetadata: async (url: string): Promise<any> => {
     const res = await api.get('/youtube/metadata', {
       params: { url },
@@ -123,12 +113,30 @@ export const reelsApi = {
     return res.data.data;
   },
 
-  // Ingest and upload YouTube Short to Cloudflare Stream
   importYouTubeShort: async (url: string, caption?: string): Promise<Reel> => {
     const res = await api.post('/youtube/import', {
       url,
       caption,
     });
     return res.data.data;
+  },
+};
+
+export const adsApi = {
+  getActiveAds: async (): Promise<{ ads: import('../types/ad').SponsoredAd[]; defaultCadence: number }> => {
+    try {
+      const res = await api.get('/ads');
+      return res.data?.data || { ads: [], defaultCadence: 4 };
+    } catch (err) {
+      console.warn('[adsApi] Failed to fetch active ads, using fallback:', err);
+      return { ads: [], defaultCadence: 4 };
+    }
+  },
+
+  trackEvent: async (adId: string, event: 'impression' | 'click'): Promise<void> => {
+    try {
+      await api.post('/ads/track', { adId, event });
+    } catch (err) {
+    }
   },
 };

@@ -9,13 +9,13 @@ import dns from 'node:dns';
 try {
   dns.setServers(['8.8.8.8', '1.1.1.1']);
 } catch {
-  // Ignore if restricted by environment
 }
 
 import { Users } from './collections/Users';
 import { Reels } from './collections/Reels';
 import { Comments } from './collections/Comments';
 import { Media } from './collections/Media';
+import { Ads } from './collections/Ads';
 
 const filename = fileURLToPath(import.meta.url);
 const dirname = path.dirname(filename);
@@ -34,7 +34,7 @@ export default buildConfig({
       beforeNavLinks: ['@/components/admin/AdminUrlCleaner#default'],
     },
   },
-  collections: [Users, Reels, Comments, Media],
+  collections: [Users, Reels, Comments, Media, Ads],
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET || 'a8f29d71c9b3e512401f893e2b9c7d41f02e8471b659c238',
   typescript: {

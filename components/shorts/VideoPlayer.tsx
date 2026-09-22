@@ -12,6 +12,9 @@ interface VideoPlayerProps {
   isActive: boolean;
   duration?: number;
   seekTime?: number | null;
+  isAd?: boolean;
+  isPausedByAd?: boolean;
+  onAdClick?: () => void;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onDoubleTapLike?: () => void;
   onEnded?: () => void;
@@ -29,6 +32,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isActive,
   duration = 45,
   seekTime,
+  isAd = false,
+  isPausedByAd = false,
+  onAdClick,
   onTimeUpdate,
   onDoubleTapLike,
   onEnded,
@@ -47,7 +53,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isPlaybackReady, setIsPlaybackReady] = useState(false);
   const hasEndedRef = useRef(false);
 
-  // Modern Seek Ripple and Hold-to-Speed HUD States
   const [seekRipple, setSeekRipple] = useState<{
     direction: 'left' | 'right';
     seconds: number;
@@ -77,7 +82,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     y: number;
   } | null>(null);
 
-  // Debounced waiting handler: only show loading spinner if buffering lasts >350ms (Instagram Reels behavior)
   const waitingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleWaiting = () => {
@@ -96,7 +100,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIsLoading(false);
   };
 
-  // Transient YouTube Shorts-style play/pause flash indicator state (triggered ONLY on user interaction)
   const [flashIcon, setFlashIcon] = useState<'play' | 'pause' | null>(null);
   const flashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pointerStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -113,7 +116,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 500);
   };
 
-  // Cleanup timeout and reset flash state whenever video changes active state
   useEffect(() => {
     setFlashIcon(null);
     if (flashTimeoutRef.current) {
@@ -176,7 +178,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const youtubeId = extractYouTubeId(src);
 
-  // Smoothly hide poster cover and enable seekbar progress once YouTube reports playing
   useEffect(() => {
     if (!youtubeId) return;
 
@@ -188,7 +189,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (!data) return;
 
-        // Check if YouTube reports active PLAYING state
         const isPlayingNow =
           data.info === 1 ||
           data.info?.playerState === 1 ||
@@ -214,7 +214,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     window.addEventListener('message', handleMessage);
 
-    // Safety fallback: only fade out after 4000ms if no postMessage is received
     const timer = setTimeout(() => {
       setShowPosterCover(false);
       setIsPlaybackReady(true);
@@ -226,13 +225,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [youtubeId, src, isActive]);
 
-  // Clean embed URL: NO playlist param, NO YouTube overlays/controls, enabled JS API
   const youtubeEmbedUrl = useMemo(() => {
     if (!youtubeId) return '';
-    return `https://www.youtube-nocookie.com/embed/${youtubeId}?enablejsapi=1&autoplay=1&mute=1&controls=0&loop=1&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&disablekb=1&fs=0&playsinline=1&autohide=1&origin=http://localhost:3000`;
+    const originParam =
+      typeof window !== 'undefined' && window.location.origin
+        ? `&origin=${encodeURIComponent(window.location.origin)}`
+        : '';
+    return `https://www.youtube-nocookie.com/embed/${youtubeId}?enablejsapi=1&autoplay=1&mute=1&controls=0&loop=1&modestbranding=1&rel=0&showinfo=0&iv_load_policy=3&disablekb=1&fs=0&playsinline=1&autohide=1${originParam}`;
   }, [youtubeId]);
 
-  // Send postMessage command to YouTube iframe API
   const sendYtCommand = (func: string, args: any[] = []) => {
     if (iframeRef.current?.contentWindow) {
       iframeRef.current.contentWindow.postMessage(
@@ -242,20 +243,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  // Sync YouTube play/pause and reset to beginning when navigating between reels
   useEffect(() => {
     if (!youtubeId) return;
 
-    if (isActive && isPlaying) {
-      sendYtCommand('seekTo', [0, true]);
+    if (isActive && isPlaying && !isPausedByAd) {
       sendYtCommand('playVideo');
     } else {
       sendYtCommand('pauseVideo');
-      sendYtCommand('seekTo', [0, true]);
+      if (!isActive) {
+        sendYtCommand('seekTo', [0, true]);
+      }
     }
-  }, [isActive, isPlaying, youtubeId]);
+  }, [isActive, isPlaying, isPausedByAd, youtubeId]);
 
-  // Sync YouTube mute/unmute via postMessage in-place (DOES NOT RESTART VIDEO)
   useEffect(() => {
     if (!youtubeId) return;
 
@@ -267,7 +267,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [isMuted, volume, youtubeId]);
 
-  // Handle Seeking when seekbar position changes
   useEffect(() => {
     if (seekTime !== null && seekTime !== undefined) {
       if (youtubeId) {
@@ -281,14 +280,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [seekTime, youtubeId, isPlaying]);
 
-  // Progress timer for YouTube Shorts: ONLY runs when video is ACTIVE, PLAYING, and PLAYBACK HAS COMMENCED
   useEffect(() => {
     if (!youtubeId || !isActive || !isPlaybackReady) {
       return;
     }
 
     const interval = setInterval(() => {
-      if (isPlaying && onTimeUpdate) {
+      if (isPlaying && !isPausedByAd && onTimeUpdate) {
         setCurrentTimeState((prev) => {
           const next = prev >= duration ? 0 : prev + 0.25;
           onTimeUpdate(next, duration);
@@ -298,7 +296,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 250);
 
     return () => clearInterval(interval);
-  }, [youtubeId, isActive, isPlaying, isPlaybackReady, duration, onTimeUpdate]);
+  }, [youtubeId, isActive, isPlaying, isPlaybackReady, isPausedByAd, duration, onTimeUpdate]);
 
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
@@ -306,7 +304,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isPlayingRef.current = isPlaying;
   const wasActiveRef = useRef(isActive);
 
-  // Initialize HLS or native video streaming (for Cloudflare Stream / MP4)
   useEffect(() => {
     if (youtubeId) {
       setIsLoading(false);
@@ -322,15 +319,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       const hls = new Hls({
-        // Instagram-Style Fast Start: Start with lowest rendition (240p/360p) for instant first-frame playback
         startLevel: 0,
-        // Start preloading immediately in background
         autoStartLoad: true,
-        // Conservative initial bandwidth estimate so tiny chunks are fetched in <150ms
         abrEwmaDefaultEstimate: 400000,
         abrBandWidthFactor: 0.8,
         abrBandWidthUpFactor: 0.7,
-        // Lean buffer for fast switching and low memory footprint
         maxBufferLength: 4,
         maxMaxBufferLength: 8,
         maxBufferSize: 8 * 1024 * 1024,
@@ -419,7 +412,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [src, youtubeId]);
 
-  // Sync HTML5 active play/pause & audio state without destroying preloaded buffers
   useEffect(() => {
     if (youtubeId) return;
     const video = videoRef.current;
@@ -428,13 +420,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (isActive) {
       video.muted = isMuted;
       video.volume = isMuted ? 0 : volume;
-      if (isPlaying) {
+      if (isPlaying && !isPausedByAd) {
         const playPromise = video.play();
         if (playPromise !== undefined) {
           playPromise
             .then(() => handlePlaying())
             .catch(() => {
-              // Fallback to muted autoplay on strict browser gesture policies
               video.muted = true;
               video.play().catch(() => {});
               handlePlaying();
@@ -444,7 +435,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         video.pause();
       }
     } else {
-      // Offscreen / Preloaded Reel: keep paused and muted to prevent audio leakage
       video.pause();
       video.muted = true;
       if (wasActiveRef.current) {
@@ -452,9 +442,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
     wasActiveRef.current = isActive;
-  }, [isActive, isPlaying, isMuted, volume, youtubeId]);
+  }, [isActive, isPlaying, isPausedByAd, isMuted, volume, youtubeId]);
 
-  // Sync mute & volume for HTML5 video when active
   useEffect(() => {
     if (youtubeId || !isActive) return;
     const video = videoRef.current;
@@ -463,10 +452,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.volume = isMuted ? 0 : volume;
   }, [isActive, isMuted, volume, youtubeId]);
 
-  // Click & Double click handler with swipe/drag vs click discrimination
   const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Perform seek forward / backward with rapid tap accumulation
   const performSeek = (direction: 'left' | 'right', delta: number) => {
     const dur = videoRef.current?.duration || duration || 60;
     const current = videoRef.current ? videoRef.current.currentTime : currentTimeState;
@@ -481,7 +468,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     setCurrentTimeState(newTime);
 
-    // Accumulate seconds if tapped rapidly
     if (seekAccumulatorRef.current.timer && seekAccumulatorRef.current.direction === direction) {
       clearTimeout(seekAccumulatorRef.current.timer);
       seekAccumulatorRef.current.seconds += delta;
@@ -499,7 +485,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }, 650);
   };
 
-  // Start Long-Press Hold (2x Speed Forward or Fast 2x Rewind)
   const startHolding = (direction: 'forward' | 'backward') => {
     if (isHoldingRef.current) return;
     isHoldingRef.current = true;
@@ -533,7 +518,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  // Stop Long-Press Hold and cleanly restore normal speed
   const stopHolding = () => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -560,7 +544,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  // Listen to Spacebar and Arrow shortcuts for the active video
   useEffect(() => {
     if (!isActive) return;
 
@@ -592,7 +575,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const ratio = clickX / rect.width;
     pointerStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
 
-    if (!isActive) return;
+    if (!isActive || isAd) return;
 
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -638,17 +621,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleVideoClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    // 0. If user was long-press holding, suppress click
+    if (isAd) {
+      if (onAdClick) {
+        onAdClick();
+      }
+      return;
+    }
     if (wasHoldingRef.current) {
       return;
     }
 
-    // 1. Guard against clicks fired during scroll/swipe release transition
     if (Date.now() - activeStartTimeRef.current < 450) {
       return;
     }
 
-    // 2. Guard against drag/swipe gestures (if mouse/pointer moved more than 8px)
     if (pointerStartRef.current) {
       const dist = Math.hypot(
         e.clientX - pointerStartRef.current.x,
@@ -672,7 +658,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (youtubeId) sendYtCommand('playVideo');
     }
 
-    // Check for double click / double tap in the same zone
     const isDoubleTap =
       lastTapRef.current &&
       now - lastTapRef.current.time < 280 &&
@@ -690,14 +675,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       } else if (zone === 'right') {
         performSeek('right', 5);
       } else {
-        // Center zone: Instagram double-tap heart like
         setHeartCoords({ x: clickX, y: clickY });
         setShowHeartBurst(true);
         setTimeout(() => setShowHeartBurst(false), 900);
         if (onDoubleTapLike) onDoubleTapLike();
       }
     } else {
-      // First tap
       lastTapRef.current = { time: now, zone, x: clickX, y: clickY };
       if (clickTimeoutRef.current) {
         clearTimeout(clickTimeoutRef.current);
@@ -787,7 +770,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           />
         </div>
       ) : (
-        /* Cloudflare Stream / HLS / HTML5 Video Player */
         <video
           ref={videoRef}
           poster={poster}
@@ -807,7 +789,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           onPlaying={handlePlaying}
           onEnded={triggerAutoAdvance}
           onTimeUpdate={() => {
-            if (videoRef.current && isActive) {
+            if (videoRef.current && isActive && !isPausedByAd) {
               const cur = videoRef.current.currentTime;
               const dur = videoRef.current.duration || 0;
               if (onTimeUpdate) {
@@ -823,7 +805,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         />
       )}
 
-      {/* Modern YouTube Shorts Transient Play/Pause Flash Indicator */}
       <AnimatePresence mode="wait">
         {isActive && flashIcon && (
           <motion.div
@@ -845,11 +826,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* 2X Speed / Rewind HUD Badges & Directional Motion Streams (Alternative Left & Right) */}
       <AnimatePresence>
-        {isActive && holdingState && holdingState.direction === 'forward' && (
+        {!isAd && isActive && holdingState && holdingState.direction === 'forward' && (
           <React.Fragment key="hud-hold-forward">
-            {/* Right Side 2X Speed Motion Stream Gradient */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -862,7 +841,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
             </motion.div>
 
-            {/* Right Side 2X Speed Floating HUD Card */}
             <motion.div
               initial={{ opacity: 0, x: 30, scale: 0.9 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
@@ -880,9 +858,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </React.Fragment>
         )}
 
-        {isActive && holdingState && holdingState.direction === 'backward' && (
+        {!isAd && isActive && holdingState && holdingState.direction === 'backward' && (
           <React.Fragment key="hud-hold-backward">
-            {/* Left Side 2X Rewind Motion Stream Gradient */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -895,7 +872,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
             </motion.div>
 
-            {/* Left Side 2X Rewind Floating HUD Card */}
             <motion.div
               initial={{ opacity: 0, x: -30, scale: 0.9 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
@@ -914,9 +890,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* YouTube-style Double Tap Left Seek Ripple (-5s) */}
       <AnimatePresence>
-        {isActive && seekRipple && seekRipple.direction === 'left' && (
+        {!isAd && isActive && seekRipple && seekRipple.direction === 'left' && (
           <motion.div
             key={`seek-left-${seekRipple.id}`}
             initial={{ opacity: 0, scale: 0.85 }}
@@ -937,9 +912,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* YouTube-style Double Tap Right Seek Ripple (+5s) */}
       <AnimatePresence>
-        {isActive && seekRipple && seekRipple.direction === 'right' && (
+        {!isAd && isActive && seekRipple && seekRipple.direction === 'right' && (
           <motion.div
             key={`seek-right-${seekRipple.id}`}
             initial={{ opacity: 0, scale: 0.85 }}
@@ -960,7 +934,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Instagram Reels Minimalist Spinner */}
       <AnimatePresence>
         {isActive && isLoading && (
           <motion.div
@@ -977,9 +950,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Double Tap Floating Heart Burst */}
       <AnimatePresence>
-        {showHeartBurst && (
+        {!isAd && showHeartBurst && (
           <motion.div
             style={{ left: heartCoords.x - 40, top: heartCoords.y - 40 }}
             initial={{ scale: 0.2, opacity: 0, rotate: -15 }}

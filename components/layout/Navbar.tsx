@@ -17,9 +17,6 @@ export const Navbar: React.FC = () => {
         </div>
         <div className="flex items-center">
           <span className="font-extrabold text-lg tracking-tight text-white">Shorts</span>
-          <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/10 text-neutral-300 border border-white/10">
-            Cloudflare Stream
-          </span>
         </div>
       </Link>
 

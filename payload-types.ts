@@ -71,6 +71,7 @@ export interface Config {
     reels: Reel;
     comments: Comment;
     media: Media;
+    ads: Ad;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -82,6 +83,7 @@ export interface Config {
     reels: ReelsSelect<false> | ReelsSelect<true>;
     comments: CommentsSelect<false> | CommentsSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
+    ads: AdsSelect<false> | AdsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -207,6 +209,31 @@ export interface Media {
   focalY?: number | null;
 }
 /**
+ * Manage In-Feed Sponsored Ads displayed during shorts browsing.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ads".
+ */
+export interface Ad {
+  id: string;
+  brandName: string;
+  headline: string;
+  caption?: string | null;
+  mediaType: 'video' | 'image';
+  videoUrl?: string | null;
+  imageUrl?: string | null;
+  posterUrl?: string | null;
+  brandAvatar?: string | null;
+  ctaText: string;
+  ctaUrl: string;
+  displayFrequency?: number | null;
+  status: 'active' | 'paused';
+  impressionsCount?: number | null;
+  clicksCount?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
@@ -245,6 +272,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'media';
         value: string | Media;
+      } | null)
+    | ({
+        relationTo: 'ads';
+        value: string | Ad;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -361,6 +392,28 @@ export interface MediaSelect<T extends boolean = true> {
   height?: T;
   focalX?: T;
   focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ads_select".
+ */
+export interface AdsSelect<T extends boolean = true> {
+  brandName?: T;
+  headline?: T;
+  caption?: T;
+  mediaType?: T;
+  videoUrl?: T;
+  imageUrl?: T;
+  posterUrl?: T;
+  brandAvatar?: T;
+  ctaText?: T;
+  ctaUrl?: T;
+  displayFrequency?: T;
+  status?: T;
+  impressionsCount?: T;
+  clicksCount?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

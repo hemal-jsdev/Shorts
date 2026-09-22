@@ -2,11 +2,9 @@ import { create } from 'zustand';
 import { Reel } from '../types/reel';
 
 interface ShortsStore {
-  // Navigation & Active item
   activeIndex: number;
   setActiveIndex: (index: number) => void;
 
-  // Audio & Playback state
   isMuted: boolean;
   volume: number;
   isPlaying: boolean;
@@ -19,7 +17,6 @@ interface ShortsStore {
   toggleAutoScroll: () => void;
   setAutoScroll: (autoScroll: boolean) => void;
 
-  // Drawers & Modals
   activeCommentReel: Reel | null;
   openComments: (reel: Reel) => void;
   closeComments: () => void;
@@ -31,6 +28,17 @@ interface ShortsStore {
   isUploadModalOpen: boolean;
   openUploadModal: () => void;
   closeUploadModal: () => void;
+
+  ads: import('../types/ad').SponsoredAd[];
+  setAds: (ads: import('../types/ad').SponsoredAd[]) => void;
+  adCadence: number;
+  setAdCadence: (cadence: number) => void;
+
+  scrolledReelsSinceAd: string[];
+  watched90ReelsSinceAd: string[];
+  recordReelScrolled: (reelId: string) => void;
+  recordReelWatched90: (reelId: string) => void;
+  resetAdTrackingCounters: () => void;
 }
 
 export const useShortsStore = create<ShortsStore>((set) => ({
@@ -41,7 +49,6 @@ export const useShortsStore = create<ShortsStore>((set) => ({
       isPlaying: state.activeIndex !== index ? true : state.isPlaying,
     })),
 
-  // Start unmuted if possible, or muted fallback for browser policy
   isMuted: true,
   volume: 1,
   isPlaying: true,
@@ -65,4 +72,31 @@ export const useShortsStore = create<ShortsStore>((set) => ({
   isUploadModalOpen: false,
   openUploadModal: () => set({ isUploadModalOpen: true }),
   closeUploadModal: () => set({ isUploadModalOpen: false }),
+
+  ads: [],
+  setAds: (ads) => set({ ads }),
+  adCadence: 4,
+  setAdCadence: (adCadence) => set({ adCadence }),
+
+  scrolledReelsSinceAd: [],
+  watched90ReelsSinceAd: [],
+  recordReelScrolled: (reelId: string) =>
+    set((state) => {
+      if (state.scrolledReelsSinceAd.includes(reelId)) return state;
+      return {
+        scrolledReelsSinceAd: [...state.scrolledReelsSinceAd, reelId],
+      };
+    }),
+  recordReelWatched90: (reelId: string) =>
+    set((state) => {
+      if (state.watched90ReelsSinceAd.includes(reelId)) return state;
+      return {
+        watched90ReelsSinceAd: [...state.watched90ReelsSinceAd, reelId],
+      };
+    }),
+  resetAdTrackingCounters: () =>
+    set({
+      scrolledReelsSinceAd: [],
+      watched90ReelsSinceAd: [],
+    }),
 }));

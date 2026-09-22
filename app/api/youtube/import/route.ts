@@ -144,10 +144,12 @@ export async function POST(req: Request) {
     const apiToken = process.env.CLOUDFLARE_STREAM_API_TOKEN;
     const hasValidCredentials = Boolean(accountId && apiToken && !accountId.includes('your_'));
 
-    let rawTitle = customCaption.trim();
-    let channelName = 'YouTube Creator';
+    // Pre-fetch oEmbed metadata (reliable, no-login required)
+    const oembed = await fetchOEmbedMetadata(videoId);
+    let rawTitle = customCaption.trim() || oembed.title || 'YouTube Short';
+    let channelName = oembed.authorName || 'YouTube Creator';
     let durationSeconds = 60;
-    let thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    let thumbnailUrl = oembed.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
     let animatedWebpUrl = thumbnailUrl;
     let streamUid: string = videoId;
     let hlsUrl: string = `https://www.youtube.com/shorts/${videoId}`;
@@ -156,40 +158,50 @@ export async function POST(req: Request) {
     let fallbackNotice: string | null = null;
 
     try {
-      const yt = await Innertube.create({
-        client_type: ClientType.ANDROID,
-        generate_session_locally: true,
-      });
-
-      const info = await yt.getBasicInfo(videoId);
-      const basic = info.basic_info;
-
-      rawTitle = rawTitle || basic.title || 'YouTube Short';
-      channelName = basic.author || 'YouTube Creator';
-      durationSeconds = basic.duration || 60;
-      thumbnailUrl = basic.thumbnail?.[0]?.url || thumbnailUrl;
-
       console.log(`[YouTube Import] 📥 Downloading stream for ID: ${videoId}...`);
-      let videoBuffer: Buffer;
-      try {
-        const stream = await yt.download(videoId, {
-          type: 'video+audio',
-          quality: 'best',
-          format: 'any',
-        });
-        videoBuffer = await readStreamToBuffer(stream);
-      } catch (androidErr) {
-        console.log('[YouTube Import] Trying MWEB client stream fallback...');
-        const ytMweb = await Innertube.create({
-          client_type: ClientType.MWEB,
-          generate_session_locally: true,
-        });
-        const mwebStream = await ytMweb.download(videoId, {
-          type: 'video+audio',
-          quality: 'best',
-          format: 'any',
-        });
-        videoBuffer = await readStreamToBuffer(mwebStream);
+      let videoBuffer: Buffer | null = null;
+      let lastDownloadErr: any = null;
+
+      const clientCandidates = [ClientType.MWEB, ClientType.ANDROID];
+
+      for (const clientType of clientCandidates) {
+        try {
+          const yt = await Innertube.create({
+            client_type: clientType,
+            generate_session_locally: true,
+          });
+
+          try {
+            const info = await yt.getBasicInfo(videoId);
+            const basic = info.basic_info;
+            if (basic) {
+              rawTitle = customCaption.trim() || basic.title || rawTitle;
+              channelName = basic.author || channelName;
+              durationSeconds = basic.duration || durationSeconds;
+              thumbnailUrl = basic.thumbnail?.[0]?.url || thumbnailUrl;
+            }
+          } catch (_) {
+          }
+
+          const stream = await yt.download(videoId, {
+            type: 'video+audio',
+            quality: 'best',
+            format: 'any',
+          });
+
+          videoBuffer = await readStreamToBuffer(stream);
+          if (videoBuffer && videoBuffer.length > 0) {
+            console.log(`[YouTube Import] ✅ Successfully downloaded via client ${clientType} (${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB)`);
+            break;
+          }
+        } catch (err: any) {
+          console.warn(`[YouTube Import] Client ${clientType} download attempt failed:`, err?.message);
+          lastDownloadErr = err;
+        }
+      }
+
+      if (!videoBuffer || videoBuffer.length === 0) {
+        throw new Error(lastDownloadErr?.message || 'Failed to download YouTube video stream.');
       }
 
       if (hasValidCredentials) {

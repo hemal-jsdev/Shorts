@@ -10,6 +10,7 @@ import {
 import { SponsoredAd } from '../../types/ad';
 import { VideoPlayer } from './VideoPlayer';
 import { adsApi } from '../../lib/api';
+import { AdProgressBar } from './AdProgressBar';
 
 interface AdItemProps {
   ad: SponsoredAd;
@@ -36,6 +37,7 @@ export const AdItem: React.FC<AdItemProps> = ({
   const imageUrl = ad.imageUrl || ad.posterUrl || ad.videoUrl || '';
 
   const [duration, setDuration] = useState(ad.durationSeconds || 15);
+  const [currentTime, setCurrentTime] = useState(0);
   const [isCaptionExpanded, setIsCaptionExpanded] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
@@ -55,7 +57,29 @@ export const AdItem: React.FC<AdItemProps> = ({
     }
   }, [isActive, ad.id]);
 
-  const handleVideoTimeUpdate = (_time: number, totalDuration: number) => {
+  // Smooth timer for image-based in-feed ads
+  useEffect(() => {
+    if (!isImageAd || !isActive) {
+      setCurrentTime(0);
+      return;
+    }
+
+    const start = Date.now();
+    const targetDuration = duration > 0 ? duration : 15;
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - start) / 1000;
+      setCurrentTime(Math.min(targetDuration, elapsed));
+      if (elapsed >= targetDuration) {
+        clearInterval(interval);
+        onEnded?.();
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isImageAd, isActive, duration, onEnded]);
+
+  const handleVideoTimeUpdate = (time: number, totalDuration: number) => {
+    setCurrentTime(time);
     if (totalDuration > 0) setDuration(totalDuration);
   };
 
@@ -139,7 +163,7 @@ export const AdItem: React.FC<AdItemProps> = ({
         )}
 
         {/* Bottom Content Layer: Brand Metadata + Clean Action Bar */}
-        <div className="absolute inset-x-0 bottom-0 p-4 pb-4 bg-gradient-to-t from-black via-black/60 to-transparent pointer-events-none text-white z-10 flex flex-col gap-2.5">
+        <div className="absolute inset-x-0 bottom-0 p-4 pb-6 sm:pb-7 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none text-white z-10 flex flex-col gap-2.5">
           {/* Brand Info */}
           <div className="flex items-center gap-3 pointer-events-auto">
             <div className="relative w-10 h-10 rounded-full overflow-hidden border border-white/40 shadow bg-neutral-800 flex-shrink-0 flex items-center justify-center">
@@ -212,6 +236,12 @@ export const AdItem: React.FC<AdItemProps> = ({
             </div>
           </button>
         </div>
+
+        {/* Non-draggable white color track seekbar */}
+        <AdProgressBar
+          currentTime={currentTime}
+          duration={duration}
+        />
       </div>
     </div>
   );

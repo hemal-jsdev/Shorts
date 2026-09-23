@@ -11,6 +11,8 @@ interface ProgressBarProps {
   onSeekStart?: () => void;
   onSeekEnd?: (finalTime: number) => void;
   disabled?: boolean;
+  isAd?: boolean;
+  showTime?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -28,6 +30,8 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   onSeekStart,
   onSeekEnd,
   disabled = false,
+  isAd = false,
+  showTime = false,
 }) => {
   const barRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -93,25 +97,26 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   return (
     <div
       ref={barRef}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
+      onPointerDown={isAd ? undefined : handlePointerDown}
+      onPointerMove={isAd ? undefined : handlePointerMove}
+      onPointerUp={isAd ? undefined : handlePointerUp}
+      onPointerCancel={isAd ? undefined : handlePointerUp}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
       }}
-      className={`absolute bottom-0 inset-x-0 z-30 h-7 flex items-end pb-0 select-none touch-none ${
-        disabled || !onSeek ? 'pointer-events-none cursor-default' : 'cursor-pointer group'
+      className={`absolute bottom-0 inset-x-0 z-30 flex flex-col justify-end pb-0 select-none touch-none ${
+        isAd || disabled || !onSeek ? 'pointer-events-none cursor-default' : 'h-7 cursor-pointer group'
       }`}
       style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
-    >      
+    >
       <div
         className={`w-full transition-all duration-150 relative bg-white/25 backdrop-blur-sm ${
-          isDragging ? 'h-2' : disabled || !onSeek ? 'h-1' : 'h-1 group-hover:h-2'
+          isAd ? 'h-1' : isDragging ? 'h-2' : disabled || !onSeek ? 'h-1' : 'h-1 group-hover:h-2'
         }`}
       >
-        {adCuepoints &&
+        {!isAd &&
+          adCuepoints &&
           adCuepoints.map((ratio, i) => (
             <div
               key={`cue-${i}`}
@@ -121,10 +126,14 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
           ))}
 
         <div
-          className="h-full bg-gradient-to-r from-red-600 to-red-500 relative transition-[width] duration-75 shadow-[0_0_12px_rgba(239,68,68,0.9)]"
+          className={`h-full relative transition-[width] ${
+            isAd
+              ? 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.95)] duration-100 ease-linear'
+              : 'bg-gradient-to-r from-red-600 to-red-500 duration-75 shadow-[0_0_12px_rgba(239,68,68,0.9)]'
+          }`}
           style={{ width: `${percentage}%` }}
         >
-          {!disabled && onSeek && (
+          {!isAd && !disabled && onSeek && (
             <div
               className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 rounded-full bg-red-600 ring-2 ring-white shadow-lg transition-transform duration-150 ${
                 isDragging

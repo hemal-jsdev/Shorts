@@ -264,26 +264,27 @@ export const ShortItem: React.FC<ShortItemProps> = ({
           </div>
         )}
 
-        {activeMidroll && (
+        {activeMidroll ? (
           <InVideoAdOverlay
             ad={activeMidroll.ad}
             durationSeconds={10}
             canSkipAfter={10}
             onComplete={handleAdComplete}
           />
+        ) : (
+          <>
+            <VideoOverlay reel={reel} />
+
+            <ProgressBar
+              currentTime={currentTime}
+              duration={duration}
+              adCuepoints={adCuepoints.length > 0 ? adCuepoints : undefined}
+              onSeek={handleSeek}
+              onSeekStart={handleSeekStart}
+              onSeekEnd={handleSeekEnd}
+            />
+          </>
         )}
-
-        <VideoOverlay reel={reel} />
-
-        <ProgressBar
-          currentTime={currentTime}
-          duration={duration}
-          adCuepoints={adCuepoints.length > 0 ? adCuepoints : undefined}
-          onSeek={handleSeek}
-          onSeekStart={handleSeekStart}
-          onSeekEnd={handleSeekEnd}
-          disabled={Boolean(activeMidroll)}
-        />
       </div>
     </div>
   );

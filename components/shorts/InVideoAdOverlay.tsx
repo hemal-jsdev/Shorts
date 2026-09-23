@@ -6,6 +6,7 @@ import { Globe, ArrowUpRight, BadgeCheck, FastForward } from 'lucide-react';
 import { SponsoredAd } from '../../types/ad';
 import { adsApi } from '../../lib/api';
 import { useShortsStore } from '../../store/useShortsStore';
+import { AdProgressBar } from './AdProgressBar';
 
 interface InVideoAdOverlayProps {
   ad: SponsoredAd;
@@ -23,6 +24,9 @@ export const InVideoAdOverlay: React.FC<InVideoAdOverlayProps> = ({
   const isImageAd = ad.mediaType === 'image' || (!ad.videoUrl && Boolean(ad.imageUrl));
 
   const [timeLeft, setTimeLeft] = useState(durationSeconds);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(durationSeconds);
+  const [imageElapsed, setImageElapsed] = useState(0);
   const [canSkip, setCanSkip] = useState(false);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
@@ -42,12 +46,21 @@ export const InVideoAdOverlay: React.FC<InVideoAdOverlayProps> = ({
   const hasCompletedRef = useRef(false);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, []);
+    if (isImageAd) {
+      const start = Date.now();
+      const interval = setInterval(() => {
+        const elapsed = (Date.now() - start) / 1000;
+        setImageElapsed(Math.min(durationSeconds, elapsed));
+        setTimeLeft(Math.max(0, Math.ceil(durationSeconds - elapsed)));
+      }, 100);
+      return () => clearInterval(interval);
+    } else {
+      const timer = setInterval(() => {
+        setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [isImageAd, durationSeconds]);
 
   useEffect(() => {
     if (!isImageAd && durationSeconds - timeLeft >= canSkipAfter && !canSkip) {
@@ -134,6 +147,15 @@ export const InVideoAdOverlay: React.FC<InVideoAdOverlayProps> = ({
             autoPlay
             playsInline
             muted={isMuted}
+            onTimeUpdate={(e) => {
+              const v = e.currentTarget;
+              if (v.currentTime !== undefined) {
+                setVideoCurrentTime(v.currentTime);
+              }
+              if (v.duration && !isNaN(v.duration) && v.duration > 0) {
+                setVideoDuration(v.duration);
+              }
+            }}
             onEnded={handleVideoEnded}
             className="w-full h-full object-cover select-none pointer-events-none"
           />
@@ -185,7 +207,7 @@ export const InVideoAdOverlay: React.FC<InVideoAdOverlayProps> = ({
         </div>
       </div>
 
-      <div className="relative z-10 w-full p-4 pb-4 bg-gradient-to-t from-black via-black/75 to-transparent pointer-events-auto flex flex-col gap-2.5">
+      <div className="relative z-10 w-full p-4 pb-6 sm:pb-7 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-auto flex flex-col gap-2.5">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-full overflow-hidden border border-white/30 shadow bg-neutral-800 flex-shrink-0 flex items-center justify-center">
             {ad.brandAvatar && !avatarFailed ? (
@@ -231,6 +253,10 @@ export const InVideoAdOverlay: React.FC<InVideoAdOverlayProps> = ({
           </div>
         </button>
       </div>
+      <AdProgressBar
+        currentTime={isImageAd ? imageElapsed : videoCurrentTime}
+        duration={isImageAd ? durationSeconds : videoDuration}
+      />
     </motion.div>
   );
 };

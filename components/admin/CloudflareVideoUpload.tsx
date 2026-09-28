@@ -16,12 +16,14 @@ import { useRouter } from 'next/navigation';
 interface UploadState {
   status: 'idle' | 'requesting' | 'uploading' | 'done' | 'error';
   progress: number; // 0–100
+  phase: 's3' | 'cloudflare' | 'done' | null; // which phase of the dual upload
   streamUid: string | null;
   hlsUrl: string | null;
   thumbnailUrl: string | null;
   errorMessage: string | null;
   fileName: string | null;
   fileSize: number | null;
+  s3Key: string | null; // persisted S3 object key
 }
 
 interface YouTubePreview {
@@ -112,6 +114,9 @@ export const CloudflareVideoUpload: React.FC = () => {
   });
   const { setValue: setStatus } = useField<string>({
     path: 'status',
+  });
+  const { setValue: setS3Key } = useField<string>({
+    path: 's3Key',
   });
 
   // Navigation and Form Submission Hooks
@@ -210,12 +215,14 @@ export const CloudflareVideoUpload: React.FC = () => {
   const [state, setState] = useState<UploadState>({
     status: 'idle',
     progress: 0,
+    phase: null,
     streamUid: null,
     hlsUrl: null,
     thumbnailUrl: null,
     errorMessage: null,
     fileName: null,
     fileSize: null,
+    s3Key: null,
   });
 
   const [isDragOver, setIsDragOver] = useState(false);
@@ -240,6 +247,8 @@ export const CloudflareVideoUpload: React.FC = () => {
         hlsUrl: hlsUrlValue ? String(hlsUrlValue) : null,
         thumbnailUrl: thumbnailValue ? String(thumbnailValue) : null,
         status: 'done',
+        phase: 'done',
+        s3Key: null,
       }));
     }
   }, []);
@@ -292,12 +301,14 @@ export const CloudflareVideoUpload: React.FC = () => {
     setState({
       status: 'uploading',
       progress: mode === 'direct' ? 70 : 25,
+      phase: mode === 'direct' ? null : 'cloudflare',
       streamUid: null,
       hlsUrl: null,
       thumbnailUrl: null,
       errorMessage: null,
       fileName: mode === 'direct' ? 'YouTube Short (Direct HD Stream)' : 'YouTube Short (Cloudflare Ingest)',
       fileSize: null,
+      s3Key: null,
     });
     setYtStep(mode === 'direct' ? 2 : 1);
     setImportNotice(null);
@@ -337,6 +348,7 @@ export const CloudflareVideoUpload: React.FC = () => {
       if (data.thumbnailUrl) setThumbnailUrl(data.thumbnailUrl);
       if (data.animatedWebpUrl) setAnimatedWebpUrl(data.animatedWebpUrl);
       if (data.caption && !captionValue) setCaption(data.caption);
+      if (data.s3Key) setS3Key(data.s3Key);
       setStatus('ready');
 
       if (notice) {
@@ -346,12 +358,14 @@ export const CloudflareVideoUpload: React.FC = () => {
       setState({
         status: 'done',
         progress: 100,
+        phase: 'done',
         streamUid: data.streamUid,
         hlsUrl: data.hlsUrl,
         thumbnailUrl: data.thumbnailUrl,
         errorMessage: null,
         fileName: `${data.caption || 'YouTube Short'} (${data.quality || (data.videoSource === 'youtube' ? 'Direct HD Stream' : 'Cloudflare Stream')})`,
         fileSize: null,
+        s3Key: data.s3Key || null,
       });
       setIsReplacing(false);
     } catch (err: any) {
@@ -369,7 +383,7 @@ export const CloudflareVideoUpload: React.FC = () => {
     }
   };
 
-  // ── Handle Direct File Upload ──────────────────────────────────────────────
+  // ── Handle Direct File Upload (S3 → Cloudflare Stream Pipeline) ─────────
   const processFile = useCallback(
     async (file: File) => {
       const allowed = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo'];
@@ -394,72 +408,103 @@ export const CloudflareVideoUpload: React.FC = () => {
       setState({
         status: 'requesting',
         progress: 0,
+        phase: 's3',
         streamUid: null,
         hlsUrl: null,
         thumbnailUrl: null,
         errorMessage: null,
         fileName: file.name,
         fileSize: file.size,
+        s3Key: null,
       });
 
       try {
-        // Step 1: Request Direct Upload URL from backend
-        const tokenRes = await fetch('/api/cloudflare/upload-url', {
+        // ── PHASE 1: Request presigned S3 PUT URL ──────────────────────────
+        const s3UrlRes = await fetch('/api/s3/upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName: file.name, mimeType: file.type }),
+        });
+
+        if (!s3UrlRes.ok) {
+          const errData = await s3UrlRes.json().catch(() => ({}));
+          throw new Error(errData.error || `S3 URL request failed: HTTP ${s3UrlRes.status}`);
+        }
+
+        const { uploadUrl: s3PutUrl, s3Key } = await s3UrlRes.json();
+
+        // ── PHASE 1 cont: Upload file directly to S3 via presigned PUT ─────
+        setState((prev) => ({ ...prev, status: 'uploading', progress: 2, phase: 's3' }));
+
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', s3PutUrl);
+          xhr.setRequestHeader('Content-Type', file.type);
+
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && event.total > 0) {
+              // Phase 1 occupies 0-60% of the overall bar
+              const pct = Math.min(60, Math.round((event.loaded / event.total) * 60));
+              setState((prev) => ({ ...prev, progress: Math.max(2, pct) }));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error(`S3 upload failed: HTTP ${xhr.status} — ${xhr.responseText}`));
+          };
+          xhr.onerror = () => reject(new Error('Network error during S3 upload. Please check your connection.'));
+          xhr.ontimeout = () => reject(new Error('S3 upload timed out.'));
+          xhr.send(file);
+        });
+
+        setState((prev) => ({ ...prev, progress: 62, phase: 'cloudflare', s3Key }));
+
+        // ── PHASE 2: Trigger Cloudflare Stream to pull from S3 ──────────────
+        const cfIngestRes = await fetch('/api/cloudflare/ingest-from-s3', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            maxDurationSeconds: 120,
-            meta: {
-              name: captionValue || file.name.replace(/\.[^/.]+$/, ''),
-              source: 'cms-direct-upload',
-            },
+            s3Key,
+            caption: captionValue || file.name.replace(/\.[^/.]+$/, ''),
           }),
         });
 
-        if (!tokenRes.ok) {
-          const errData = await tokenRes.json().catch(() => ({}));
-          throw new Error(errData.error || `Upload token request failed: HTTP ${tokenRes.status}`);
+        if (!cfIngestRes.ok) {
+          const errData = await cfIngestRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Cloudflare ingest failed: HTTP ${cfIngestRes.status}`);
         }
 
-        const { uploadURL, uid } = await tokenRes.json();
+        setState((prev) => ({ ...prev, progress: 90 }));
 
-        // Step 2: Stream binary directly to Cloudflare
-        setState((prev) => ({ ...prev, status: 'uploading', progress: 5, streamUid: uid }));
+        const { streamUid, hlsUrl, thumbnailUrl: cfThumb, animatedWebpUrl } = await cfIngestRes.json();
 
-        await directUpload(uploadURL, file, (pct) => {
-          setState((prev) => ({ ...prev, progress: Math.max(5, pct) }));
-        });
-
-        // Step 3: Populate Payload CMS fields
-        const streamDomain = 'customer-d3tadt8nvkirw68k.cloudflarestream.com';
-        const finalHls = `https://${streamDomain}/${uid}/manifest/video.m3u8`;
-        const finalThumb = `https://${streamDomain}/${uid}/thumbnails/thumbnail.jpg?time=1s&height=720`;
-        const finalGif = `https://${streamDomain}/${uid}/thumbnails/thumbnail.gif`;
-
-        setStreamUid(uid);
+        // ── PHASE 3: Populate Payload CMS form fields ──────────────────────
+        setStreamUid(streamUid);
         setVideoSource('cloudflare');
-        setHlsUrl(finalHls);
-        setThumbnailUrl(finalThumb);
-        setAnimatedWebpUrl(finalGif);
+        setHlsUrl(hlsUrl);
+        setThumbnailUrl(cfThumb);
+        setAnimatedWebpUrl(animatedWebpUrl);
+        setS3Key(s3Key);
         if (!captionValue) {
           const autoCaption = file.name
             .replace(/\.[^/.]+$/, '')
-            .replace(/^[a-zA-Z0-9.-]+\s*-\s*/, '')
             .replace(/[_-]/g, ' ')
             .trim();
           setCaption(autoCaption);
         }
-        setStatus('ready');
+        setStatus('processing'); // Cloudflare transcoding typically takes 30-120s
 
         setState({
           status: 'done',
           progress: 100,
-          streamUid: uid,
-          hlsUrl: finalHls,
-          thumbnailUrl: finalThumb,
+          phase: 'done',
+          streamUid,
+          hlsUrl,
+          thumbnailUrl: cfThumb,
           errorMessage: null,
           fileName: file.name,
           fileSize: file.size,
+          s3Key,
         });
         setIsReplacing(false);
       } catch (err: any) {
@@ -467,11 +512,12 @@ export const CloudflareVideoUpload: React.FC = () => {
           ...prev,
           status: 'error',
           progress: 0,
+          phase: null,
           errorMessage: err.message || 'Video upload failed. Please try again.',
         }));
       }
     },
-    [setStreamUid, setVideoSource, setHlsUrl, setThumbnailUrl, setAnimatedWebpUrl, setCaption, setStatus, captionValue]
+    [setStreamUid, setVideoSource, setHlsUrl, setThumbnailUrl, setAnimatedWebpUrl, setCaption, setStatus, setS3Key, captionValue]
   );
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -612,6 +658,26 @@ export const CloudflareVideoUpload: React.FC = () => {
                       title="Copy Stream URL"
                     >
                       {copiedField === 'hls' ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* S3 Master Archive Key */}
+              {state.s3Key && (
+                <div style={styles.codeSnippetGroup}>
+                  <span style={{ ...styles.snippetLabel, color: '#f59e0b' }}>
+                    🗄️ S3 MASTER ARCHIVE KEY
+                  </span>
+                  <div style={{ ...styles.snippetBox, borderColor: 'rgba(245, 158, 11, 0.3)' }}>
+                    <code style={{ ...styles.snippetCodeUrl, color: '#fcd34d' }}>{state.s3Key}</code>
+                    <button
+                      type="button"
+                      onClick={() => copyText(state.s3Key || '', 's3key')}
+                      style={styles.copyBtn}
+                      title="Copy S3 Key"
+                    >
+                      {copiedField === 's3key' ? '✓ Copied' : '📋 Copy'}
                     </button>
                   </div>
                 </div>
@@ -777,11 +843,15 @@ export const CloudflareVideoUpload: React.FC = () => {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={styles.fileName}>{state.fileName || 'Processing video stream…'}</p>
                   <p style={styles.fileMeta}>
-                    {ytStep === 1
+                    {state.phase === 's3'
+                      ? '📦 Archiving master video to AWS S3 secure storage…'
+                      : state.phase === 'cloudflare'
+                      ? '☁️ Handing off to Cloudflare Stream for adaptive HLS transcoding…'
+                      : ytStep === 1
                       ? 'Extracting video & audio stream metadata…'
                       : ytStep === 2
                       ? 'Configuring adaptive HLS stream & CDN manifest…'
-                      : 'Uploading video directly to Cloudflare Stream…'}
+                      : 'Uploading video to Cloudflare Stream…'}
                   </p>
                 </div>
                 <span style={styles.progressPct}>{state.progress}%</span>
@@ -796,7 +866,11 @@ export const CloudflareVideoUpload: React.FC = () => {
                 />
               </div>
               <p style={styles.uploadingNote}>
-                ⚡ Ingesting master video stream — please keep this tab open
+                {state.phase === 's3'
+                  ? '🔒 Step 1/2 — Uploading master archive to AWS S3 (private bucket) — keep this tab open'
+                  : state.phase === 'cloudflare'
+                  ? '☁️ Step 2/2 — Cloudflare Stream is pulling from S3 & transcoding — almost done!'
+                  : '⚡ Ingesting master video stream — please keep this tab open'}
               </p>
             </div>
           )}

@@ -1,11 +1,12 @@
 import type { CollectionConfig } from 'payload';
+import { deleteFromS3 } from '@/lib/s3';
 
 export const Reels: CollectionConfig = {
   slug: 'reels',
   admin: {
     useAsTitle: 'caption',
     defaultColumns: ['caption', 'author', 'status', 'hlsUrl', 'createdAt'],
-    description: 'Manage short-form videos with Cloudflare Stream adaptive video streaming.',
+    description: 'Manage short-form videos. Master files stored in AWS S3 → transcoded via Cloudflare Stream for adaptive HLS delivery.',
   },
   defaultSort: '-createdAt',
   access: {
@@ -96,6 +97,7 @@ export const Reels: CollectionConfig = {
     ],
     afterDelete: [
       async ({ doc }) => {
+        // Clean up Cloudflare Stream video
         if (doc?.streamUid && doc?.videoSource !== 'youtube') {
           try {
             const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -105,14 +107,22 @@ export const Reels: CollectionConfig = {
                 `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${doc.streamUid}`,
                 {
                   method: 'DELETE',
-                  headers: {
-                    Authorization: `Bearer ${apiToken}`,
-                  },
+                  headers: { Authorization: `Bearer ${apiToken}` },
                 }
               );
             }
           } catch (err) {
             console.warn('Cloudflare stream cleanup failed:', err);
+          }
+        }
+
+        // Clean up master video from S3 archive
+        if (doc?.s3Key) {
+          try {
+            await deleteFromS3(doc.s3Key);
+            console.log(`[Reels] Deleted S3 master video: ${doc.s3Key}`);
+          } catch (err) {
+            console.warn('S3 master video cleanup failed:', err);
           }
         }
       },
@@ -175,6 +185,17 @@ export const Reels: CollectionConfig = {
       type: 'text',
       admin: {
         hidden: true,
+      },
+    },
+    {
+      // S3 object key for the original master video file
+      // e.g. "videos/550e8400-e29b-41d4-a716-446655440000.mp4"
+      name: 's3Key',
+      type: 'text',
+      label: 'S3 Master Video Key',
+      admin: {
+        hidden: true,
+        description: 'S3 object key for the original master video archive file.',
       },
     },
 

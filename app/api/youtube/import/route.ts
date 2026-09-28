@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getPayload } from 'payload';
 import config from '@payload-config';
 import axios from 'axios';
+import { uploadToS3, getPresignedGetUrl, isS3Configured } from '@/lib/s3';
+import { randomUUID } from 'crypto';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 180; // Allow sufficient time for high-res download & upload
@@ -242,50 +244,107 @@ export async function POST(req: Request) {
       }
 
       if (hasValidCredentials) {
-        console.log('[YouTube Import] ☁️ Uploading to Cloudflare Stream...');
-        const directUploadRes = await fetch(
-          `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/direct_upload`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              maxDurationSeconds: Math.max(durationSeconds, 60),
-              meta: {
-                name: rawTitle,
-                source: 'youtube-shorts-import',
-                youtubeId: videoId,
-                channelName,
-              },
-              requireSignedURLs: false,
-              allowedOrigins: ['*'],
-            }),
-          }
-        );
+        let uploadedS3Key: string | null = null;
 
-        if (!directUploadRes.ok) {
-          const errText = await directUploadRes.text();
-          throw new Error(`Cloudflare Direct Upload request failed: ${errText}`);
+        // ── If S3 is configured: archive master file first, then CF pulls from S3 ──
+        if (isS3Configured()) {
+          try {
+            console.log('[YouTube Import] 📦 Archiving master video to S3...');
+            const s3Key = `videos/${randomUUID()}.mp4`;
+            await uploadToS3(s3Key, videoBuffer, 'video/mp4');
+            uploadedS3Key = s3Key;
+            console.log(`[YouTube Import] ✅ S3 archive complete: ${s3Key}`);
+
+            // Generate presigned URL for Cloudflare to pull from
+            const presignedUrl = await getPresignedGetUrl(s3Key, 7200);
+
+            console.log('[YouTube Import] ☁️ Triggering Cloudflare Stream /copy from S3...');
+            const cfCopyRes = await fetch(
+              `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/copy`,
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${apiToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  url: presignedUrl,
+                  meta: {
+                    name: rawTitle,
+                    source: 'youtube-s3-import',
+                    youtubeId: videoId,
+                    s3Key,
+                    channelName,
+                  },
+                  requireSignedURLs: false,
+                  allowedOrigins: ['*'],
+                }),
+              }
+            );
+
+            if (!cfCopyRes.ok) {
+              const errText = await cfCopyRes.text();
+              throw new Error(`Cloudflare /copy from S3 failed: ${errText}`);
+            }
+
+            const cfCopyData = await cfCopyRes.json();
+            streamUid = cfCopyData.result.uid;
+          } catch (s3Err: any) {
+            console.warn('[YouTube Import] S3+CF copy failed, falling back to direct upload:', s3Err.message);
+            uploadedS3Key = null;
+            // Fall through to direct upload below
+          }
         }
 
-        const cfData = await directUploadRes.json();
-        const uploadUrl = cfData.result.uploadURL;
-        streamUid = cfData.result.uid;
+        // ── Fallback or no S3: upload binary directly to Cloudflare ──────────
+        if (!uploadedS3Key) {
+          console.log('[YouTube Import] ☁️ Uploading directly to Cloudflare Stream...');
+          const directUploadRes = await fetch(
+            `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/direct_upload`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${apiToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                maxDurationSeconds: Math.max(durationSeconds, 60),
+                meta: {
+                  name: rawTitle,
+                  source: 'youtube-shorts-import',
+                  youtubeId: videoId,
+                  channelName,
+                },
+                requireSignedURLs: false,
+                allowedOrigins: ['*'],
+              }),
+            }
+          );
 
-        const formData = new FormData();
-        const videoBlob = new Blob([new Uint8Array(videoBuffer)], { type: 'video/mp4' });
-        formData.append('file', videoBlob, `${videoId}.mp4`);
+          if (!directUploadRes.ok) {
+            const errText = await directUploadRes.text();
+            throw new Error(`Cloudflare Direct Upload request failed: ${errText}`);
+          }
 
-        const uploadBinaryRes = await fetch(uploadUrl, {
-          method: 'POST',
-          body: formData,
-        });
+          const cfData = await directUploadRes.json();
+          const uploadUrl = cfData.result.uploadURL;
+          streamUid = cfData.result.uid;
 
-        if (!uploadBinaryRes.ok) {
-          const uploadErr = await uploadBinaryRes.text();
-          throw new Error(`Failed to upload video binary to Cloudflare: ${uploadErr}`);
+          const formData = new FormData();
+          const videoBlob = new Blob([new Uint8Array(videoBuffer)], { type: 'video/mp4' });
+          formData.append('file', videoBlob, `${videoId}.mp4`);
+
+          const uploadBinaryRes = await fetch(uploadUrl, { method: 'POST', body: formData });
+          if (!uploadBinaryRes.ok) {
+            const uploadErr = await uploadBinaryRes.text();
+            throw new Error(`Failed to upload video binary to Cloudflare: ${uploadErr}`);
+          }
+        }
+
+        // Persist S3 key to outer scope so it's included in the Reel document
+        if (uploadedS3Key) {
+          // Attach to closure variable for the document creation step below
+          (body as any).__s3Key = uploadedS3Key;
         }
 
         hlsUrl = `https://${streamDomain}/${streamUid}/manifest/video.m3u8`;
@@ -306,6 +365,7 @@ export async function POST(req: Request) {
 
     // ── Document Creation (if requested) ─────────────────────────────────────
     let createdDocId: string | null = null;
+    const s3Key: string | null = (body as any).__s3Key || null;
     if (body.createDocument) {
       const payload = await getPayload({ config });
       const users = await payload.find({ collection: 'users', limit: 1 });
@@ -320,6 +380,7 @@ export async function POST(req: Request) {
           hlsUrl,
           thumbnailUrl,
           animatedWebpUrl,
+          ...(s3Key ? { s3Key } : {}),
           author: authorId,
           status: 'ready',
         },
@@ -339,6 +400,7 @@ export async function POST(req: Request) {
         hlsUrl,
         thumbnailUrl,
         animatedWebpUrl,
+        s3Key,
         durationSeconds,
         authorName: channelName,
         quality: detectedQuality,

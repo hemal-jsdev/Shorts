@@ -20,6 +20,55 @@ import { Ads } from './collections/Ads';
 const filename = fileURLToPath(import.meta.url);
 const dirname = path.dirname(filename);
 
+// ── Conditionally load Payload S3 storage plugin ──────────────────────────────
+// When AWS credentials are configured the Media collection's files are stored
+// in S3 under the "videos/" prefix. Without credentials the plugin is simply
+// omitted and Payload falls back to local disk (public/media/).
+const buildPlugins = async () => {
+  const {
+    AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY,
+    AWS_S3_BUCKET,
+    AWS_REGION,
+    AWS_S3_ENDPOINT,
+  } = process.env;
+
+  const hasS3 = Boolean(
+    AWS_ACCESS_KEY_ID &&
+      !AWS_ACCESS_KEY_ID.includes('your_') &&
+      AWS_SECRET_ACCESS_KEY &&
+      !AWS_SECRET_ACCESS_KEY.includes('your_') &&
+      AWS_S3_BUCKET &&
+      !AWS_S3_BUCKET.includes('your-')
+  );
+
+  if (!hasS3) return [];
+
+  const { s3Storage } = await import('@payloadcms/storage-s3');
+  return [
+    s3Storage({
+      collections: {
+        // Route all Media collection uploads to S3 under "videos/" folder
+        media: {
+          prefix: 'videos',
+        },
+      },
+      bucket: AWS_S3_BUCKET!,
+      config: {
+        credentials: {
+          accessKeyId: AWS_ACCESS_KEY_ID!,
+          secretAccessKey: AWS_SECRET_ACCESS_KEY!,
+        },
+        region: AWS_REGION || 'us-east-1',
+        ...(AWS_S3_ENDPOINT?.trim()
+          ? { endpoint: AWS_S3_ENDPOINT.trim(), forcePathStyle: true }
+          : {}),
+      },
+      acl: 'private',
+    }),
+  ];
+};
+
 export default buildConfig({
   admin: {
     user: Users.slug,
@@ -43,4 +92,5 @@ export default buildConfig({
   db: mongooseAdapter({
     url: process.env.MONGODB_URI || '',
   }),
+  plugins: await buildPlugins(),
 });

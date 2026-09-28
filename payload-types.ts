@@ -155,7 +155,7 @@ export interface User {
   collection: 'users';
 }
 /**
- * Manage short-form videos with Cloudflare Stream adaptive video streaming.
+ * Manage short-form videos. Master files stored in AWS S3 → transcoded via Cloudflare Stream for adaptive HLS delivery.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "reels".
@@ -170,6 +170,10 @@ export interface Reel {
   status: 'ready' | 'processing' | 'draft' | 'failed';
   videoSource?: string | null;
   streamUid?: string | null;
+  /**
+   * S3 object key for the original master video archive file.
+   */
+  s3Key?: string | null;
   hlsUrl: string;
   thumbnailUrl?: string | null;
   animatedWebpUrl?: string | null;
@@ -357,6 +361,7 @@ export interface ReelsSelect<T extends boolean = true> {
   status?: T;
   videoSource?: T;
   streamUid?: T;
+  s3Key?: T;
   hlsUrl?: T;
   thumbnailUrl?: T;
   animatedWebpUrl?: T;

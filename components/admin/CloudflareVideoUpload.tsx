@@ -141,56 +141,38 @@ export const CloudflareVideoUpload: React.FC = () => {
     }
   }, [docInfo?.id, docInfo?.isEditing]);
 
+  // Prefetch reels list so navigation is instant
+  useEffect(() => {
+    router.prefetch('/admin/collections/reels');
+  }, [router]);
+
+  // Fallback for session storage redirect
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const justCreated = window.sessionStorage.getItem('payload_reel_just_created');
       if (justCreated) {
         window.sessionStorage.removeItem('payload_reel_just_created');
-        window.sessionStorage.removeItem('payload-pending-success-toast');
         toast.success('🎉 Reel published successfully !!');
         router.replace('/admin/collections/reels');
-        router.refresh();
       }
     }
   }, [router]);
 
-  // Listen for create form submission completion
+  // Instant redirect on create form submission completion
   useEffect(() => {
     if (!isCreateModeRef.current) return;
 
     if (isFormProcessing) {
       wasProcessingRef.current = true;
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem('payload_reel_just_created', 'true');
-      }
     } else if (wasProcessingRef.current) {
       wasProcessingRef.current = false;
-
-      const timer = setTimeout(() => {
-        if (typeof window !== 'undefined') {
-          const hasToast = window.sessionStorage.getItem('payload-pending-success-toast');
-          const hasDocId = Boolean(docInfo?.id);
-
-          if (hasToast || hasDocId) {
-            window.sessionStorage.removeItem('payload_reel_just_created');
-            window.sessionStorage.removeItem('payload-pending-success-toast');
-            toast.success('🎉 Reel published successfully !!');
-            router.replace('/admin/collections/reels');
-            router.refresh();
-          } else {
-            window.sessionStorage.removeItem('payload_reel_just_created');
-          }
-        }
-      }, 120);
-
-      return () => clearTimeout(timer);
+      // Document created in create mode — navigate immediately to reels list
+      toast.success('🎉 Reel published successfully !!');
+      router.replace('/admin/collections/reels');
     }
-  }, [isFormProcessing, docInfo?.id, router]);
+  }, [isFormProcessing, router]);
 
   const handleSaveAndRedirect = async () => {
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem('payload_reel_just_created', 'true');
-    }
     try {
       if (typeof submit === 'function') {
         await submit();
@@ -420,10 +402,11 @@ export const CloudflareVideoUpload: React.FC = () => {
 
       try {
         // ── PHASE 1: Request presigned S3 PUT URL ──────────────────────────
+        const effectiveMimeType = file.type || 'video/mp4';
         const s3UrlRes = await fetch('/api/s3/upload-url', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileName: file.name, mimeType: file.type }),
+          body: JSON.stringify({ fileName: file.name, mimeType: effectiveMimeType }),
         });
 
         if (!s3UrlRes.ok) {
@@ -439,7 +422,7 @@ export const CloudflareVideoUpload: React.FC = () => {
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('PUT', s3PutUrl);
-          xhr.setRequestHeader('Content-Type', file.type);
+          xhr.setRequestHeader('Content-Type', effectiveMimeType);
 
           xhr.upload.onprogress = (event) => {
             if (event.lengthComputable && event.total > 0) {
@@ -466,6 +449,8 @@ export const CloudflareVideoUpload: React.FC = () => {
           body: JSON.stringify({
             s3Key,
             caption: captionValue || file.name.replace(/\.[^/.]+$/, ''),
+            fileSize: file.size,
+            mimeType: effectiveMimeType,
           }),
         });
 
@@ -492,7 +477,7 @@ export const CloudflareVideoUpload: React.FC = () => {
             .trim();
           setCaption(autoCaption);
         }
-        setStatus('processing'); // Cloudflare transcoding typically takes 30-120s
+        setStatus('ready');
 
         setState({
           status: 'done',
@@ -946,46 +931,28 @@ export const CloudflareVideoUpload: React.FC = () => {
                 </div>
               )}
 
-              {/* Action Buttons: Dual Modern Actions */}
+              {/* Action Button: Single Unified Pipeline */}
               <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    disabled={!youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading'}
-                    onClick={() => handleYouTubeImport('cloudflare')}
-                    style={{
-                      ...styles.importCloudflareBtn,
-                      flex: 1,
-                      minWidth: '220px',
-                      opacity: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 0.55 : 1,
-                      cursor: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    <span style={{ fontSize: 16 }}>☁️</span>
-                    <span>
-                      {state.status === 'uploading'
-                        ? 'Importing to Cloudflare Stream...'
-                        : 'Import to Cloudflare Stream'}
-                    </span>
-                  </button>
+                <button
+                  type="button"
+                  disabled={!youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading'}
+                  onClick={() => handleYouTubeImport('cloudflare')}
+                  style={{
+                    ...styles.importCloudflareBtn,
+                    opacity: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 0.55 : 1,
+                    cursor: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  <span style={{ fontSize: 16 }}>{state.status === 'uploading' ? '⏳' : '⚡'}</span>
+                  <span>
+                    {state.status === 'uploading'
+                      ? 'Processing Video (S3 Archive → Cloudflare Transcode)...'
+                      : 'Import & Process Video'}
+                  </span>
+                </button>
 
-                  <button
-                    type="button"
-                    disabled={!youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading'}
-                    onClick={() => handleYouTubeImport('direct')}
-                    style={{
-                      ...styles.importDirectBtn,
-                      opacity: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 0.55 : 1,
-                      cursor: !youtubeUrl.trim() || isFetchingMeta || state.status === 'uploading' ? 'not-allowed' : 'pointer',
-                    }}
-                    title="Instant 1-click import using YouTube direct stream player"
-                  >
-                    <span style={{ fontSize: 15 }}>⚡</span>
-                    <span>Instant Direct Stream</span>
-                  </button>
-                </div>
                 <span style={{ fontSize: 11, color: '#71717a' }}>
-                  💡 <em>Import to Cloudflare Stream</em> auto-falls back to Direct Lossless HD if YouTube restricts datacenter cloud servers on Vercel. <em>Instant Direct Stream</em> connects in ~100ms.
+                  📦 Downloads the short, archives the master file in AWS S3, transcodes in Cloudflare Stream, and registers in the Media collection.
                 </span>
               </div>
             </div>

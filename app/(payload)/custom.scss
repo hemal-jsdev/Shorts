@@ -441,3 +441,68 @@ form textarea {
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12) !important;
   }
 }
+
+.file-details {
+  border-radius: 14px !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  background: var(--theme-elevation-50, #141416) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35) !important;
+
+  header {
+    min-height: 240px !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: stretch !important;
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+
+  .file-details__thumbnail,
+  .thumbnail {
+    min-height: 240px !important;
+    height: 100% !important;
+    width: 135px !important;
+    aspect-ratio: 9 / 16 !important;
+    flex-shrink: 0 !important;
+    border-radius: 0 !important;
+    overflow: hidden !important;
+    background: #000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+    align-self: stretch !important;
+    margin: 0 !important;
+
+    img,
+    svg {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+      display: block !important;
+    }
+  }
+
+  .file-details__main-detail {
+    padding: 24px 28px !important;
+    justify-content: center !important;
+    gap: 12px !important;
+
+    .file-meta {
+      gap: 6px !important;
+
+      &__filename {
+        font-size: 1.05rem !important;
+        font-weight: 700 !important;
+        color: #f4f4f5 !important;
+        letter-spacing: -0.01em !important;
+      }
+
+      &__meta {
+        font-size: 0.85rem !important;
+        color: #a1a1aa !important;
+      }
+    }
+  }
+}
+

@@ -92,11 +92,41 @@ export const Reels: CollectionConfig = {
           data.status = String(data.status).toLowerCase();
         }
 
+        // Auto-heal 'processing' status if Cloudflare video is already readyToStream (max 1s non-blocking check)
+        if (data.streamUid && (data.status === 'processing' || !data.status)) {
+          try {
+            const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+            const apiToken = process.env.CLOUDFLARE_STREAM_API_TOKEN;
+            if (accountId && apiToken && data.videoSource !== 'youtube') {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 1000);
+              const cfCheck = await fetch(
+                `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${data.streamUid}`,
+                {
+                  headers: { Authorization: `Bearer ${apiToken}` },
+                  signal: controller.signal,
+                }
+              ).catch(() => null);
+              clearTimeout(timeout);
+              if (cfCheck && cfCheck.ok) {
+                const cfJson = await cfCheck.json().catch(() => null);
+                if (cfJson?.result?.readyToStream || cfJson?.result?.status?.state === 'ready') {
+                  data.status = 'ready';
+                }
+              }
+            } else {
+              data.status = 'ready';
+            }
+          } catch {
+            data.status = 'ready';
+          }
+        }
+
         return data;
       },
     ],
     afterDelete: [
-      async ({ doc }) => {
+      async ({ doc, req }) => {
         // Clean up Cloudflare Stream video
         if (doc?.streamUid && doc?.videoSource !== 'youtube') {
           try {
@@ -116,11 +146,16 @@ export const Reels: CollectionConfig = {
           }
         }
 
-        // Clean up master video from S3 archive
+        // Clean up master video from S3 archive and Media collection
         if (doc?.s3Key) {
           try {
             await deleteFromS3(doc.s3Key);
             console.log(`[Reels] Deleted S3 master video: ${doc.s3Key}`);
+            const filename = doc.s3Key.replace(/^videos\//, '');
+            const db = (req?.payload?.db as any)?.connection?.db;
+            if (db) {
+              await db.collection('media').deleteOne({ filename });
+            }
           } catch (err) {
             console.warn('S3 master video cleanup failed:', err);
           }

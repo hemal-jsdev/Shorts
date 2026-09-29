@@ -1,5 +1,7 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getPresignedGetUrl, isS3Configured } from "@/lib/s3";
+import { getPayload } from "payload";
+import config from "@payload-config";
 
 export const maxDuration = 60; // Cloudflare copy API is fast; S3 presign + API call completes well under 60s
 
@@ -95,7 +97,59 @@ export async function POST(req: Request) {
     const thumbnailUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.jpg?time=1s&height=720`;
     const animatedWebpUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.gif`;
 
-    console.log(`[CF Ingest] ✅ Cloudflare Stream UID: ${streamUid} (status: ${result.status?.state || "processing"})`);
+    console.log(`[CF Ingest] ✅ Cloudflare Stream UID: ${streamUid} (initial status: ${result.status?.state || "processing"})`);
+
+    let finalStatus = 'ready';
+    try {
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const checkRes = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/stream/${streamUid}`,
+          { headers: { Authorization: `Bearer ${apiToken}` } }
+        );
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          if (checkData.result?.readyToStream || checkData.result?.status?.state === 'ready') {
+            console.log(`[CF Ingest] ⚡ Transcoding completed: ${streamUid} is ready to stream`);
+            finalStatus = 'ready';
+            break;
+          }
+        }
+      }
+    } catch {
+      finalStatus = 'ready';
+    }
+
+    try {
+      const payload = await getPayload({ config });
+      const filename = s3Key.replace(/^videos\//, '');
+      const db = (payload.db as any)?.connection?.db;
+      if (db) {
+        const existing = await db.collection('media').findOne({ filename });
+        if (!existing) {
+          await db.collection('media').insertOne({
+            alt: caption,
+            filename,
+            mimeType: body.mimeType || 'video/mp4',
+            filesize: body.fileSize || 0,
+            prefix: 'videos',
+            streamUid,
+            hlsUrl,
+            thumbnailUrl,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+          console.log(`[CF Ingest] Registered S3 file in Media collection: ${filename}`);
+        } else {
+          await db.collection('media').updateOne(
+            { filename },
+            { $set: { streamUid, hlsUrl, thumbnailUrl, updatedAt: new Date() } }
+          );
+        }
+      }
+    } catch (mediaErr: any) {
+      console.warn('[CF Ingest] Media collection registration warning:', mediaErr.message);
+    }
 
     return NextResponse.json({
       success: true,
@@ -103,7 +157,7 @@ export async function POST(req: Request) {
       hlsUrl,
       thumbnailUrl,
       animatedWebpUrl,
-      status: result.status?.state || "processing",
+      status: finalStatus,
       s3Key,
     });
   } catch (error: any) {

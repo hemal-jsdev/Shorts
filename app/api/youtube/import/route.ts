@@ -341,16 +341,47 @@ export async function POST(req: Request) {
           }
         }
 
-        // Persist S3 key to outer scope so it's included in the Reel document
-        if (uploadedS3Key) {
-          // Attach to closure variable for the document creation step below
-          (body as any).__s3Key = uploadedS3Key;
-        }
-
         hlsUrl = `https://${streamDomain}/${streamUid}/manifest/video.m3u8`;
         thumbnailUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.jpg?time=1s&height=720`;
         animatedWebpUrl = `https://${streamDomain}/${streamUid}/thumbnails/thumbnail.gif`;
         console.log(`[YouTube Import] ✅ Successfully uploaded to Cloudflare Stream (UID: ${streamUid})`);
+
+        // Persist S3 key to outer scope so it's included in the Reel document
+        if (uploadedS3Key) {
+          // Attach to closure variable for the document creation step below
+          (body as any).__s3Key = uploadedS3Key;
+
+          try {
+            const payload = await getPayload({ config });
+            const filename = uploadedS3Key.replace(/^videos\//, '');
+            const db = (payload.db as any)?.connection?.db;
+            if (db) {
+              const existing = await db.collection('media').findOne({ filename });
+              if (!existing) {
+                await db.collection('media').insertOne({
+                  alt: rawTitle,
+                  filename,
+                  mimeType: 'video/mp4',
+                  filesize: videoBuffer.length,
+                  prefix: 'videos',
+                  streamUid,
+                  hlsUrl,
+                  thumbnailUrl,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                });
+                console.log(`[YouTube Import] Registered S3 file in Media collection: ${filename}`);
+              } else {
+                await db.collection('media').updateOne(
+                  { filename },
+                  { $set: { streamUid, hlsUrl, thumbnailUrl, updatedAt: new Date() } }
+                );
+              }
+            }
+          } catch (mediaErr: any) {
+            console.warn('[YouTube Import] Media collection registration warning:', mediaErr.message);
+          }
+        }
       } else {
         throw new Error('Cloudflare Stream credentials are missing in the server environment.');
       }

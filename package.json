@@ -7,6 +7,7 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
+    "generate:importmap": "payload generate:importmap",
     "seed": "tsx --env-file=.env scripts/seed-payload.ts",
     "lint": "next lint"
   },

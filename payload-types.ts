@@ -194,12 +194,21 @@ export interface Comment {
   createdAt: string;
 }
 /**
+ * Master video files and media assets archived in AWS S3 under the "videos/" folder.
+ *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "media".
  */
 export interface Media {
   id: string;
   alt?: string | null;
+  /**
+   * Cloudflare Stream or video poster thumbnail.
+   */
+  thumbnailUrl?: string | null;
+  streamUid?: string | null;
+  hlsUrl?: string | null;
+  prefix?: string | null;
   updatedAt: string;
   createdAt: string;
   url?: string | null;
@@ -386,6 +395,10 @@ export interface CommentsSelect<T extends boolean = true> {
  */
 export interface MediaSelect<T extends boolean = true> {
   alt?: T;
+  thumbnailUrl?: T;
+  streamUid?: T;
+  hlsUrl?: T;
+  prefix?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;

@@ -69,7 +69,17 @@ const buildPlugins = async () => {
   ];
 };
 
+const allowedOrigins = Array.from(
+  new Set([
+    'https://swiftness-overview-kinswoman.ngrok-free.dev',
+    'http://localhost:3000',
+    ...(process.env.NEXT_PUBLIC_SERVER_URL ? [process.env.NEXT_PUBLIC_SERVER_URL] : []),
+  ])
+);
+
 export default buildConfig({
+  cors: allowedOrigins,
+  csrf: allowedOrigins,
   admin: {
     user: Users.slug,
     theme: 'dark',
@@ -91,6 +101,12 @@ export default buildConfig({
   },
   db: mongooseAdapter({
     url: process.env.MONGODB_URI || '',
+    connectOptions: {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 20000,
+      maxPoolSize: 20,
+      minPoolSize: 2,
+    },
   }),
   plugins: await buildPlugins(),
 });

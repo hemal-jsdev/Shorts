@@ -17,7 +17,7 @@
     "@payloadcms/db-mongodb": "^3.89.0",
     "@payloadcms/next": "^3.89.0",
     "@payloadcms/richtext-lexical": "^3.89.0",
-    "@payloadcms/storage-s3": "^3.90.2",
+    "@payloadcms/storage-s3": "^3.89.0",
     "@payloadcms/ui": "^3.89.0",
     "axios": "^1.7.9",
     "clsx": "^2.1.1",

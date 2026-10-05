@@ -251,7 +251,7 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
           'bg-black/70 backdrop-blur-md border transition-all duration-200 select-none',
           isYouTube
             ? 'border-white/10 opacity-40 cursor-not-allowed'
-            : 'border-white/20 hover:border-white/40 hover:bg-white/15 cursor-pointer active:scale-95',
+            : 'border-white/20 hover:border-white/40 hover:bg-black/90 cursor-pointer active:scale-95',
         ].join(' ')}
         style={{ WebkitTouchCallout: 'none' }}
       >

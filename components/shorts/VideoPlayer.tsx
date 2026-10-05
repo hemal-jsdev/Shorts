@@ -1073,9 +1073,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }}
             aria-label={isMuted ? 'Unmute video' : 'Mute video'}
             title={isMuted ? 'Unmute' : 'Mute'}
-            className="p-2.5 rounded-full glass-button text-white shadow-lg cursor-pointer transition-transform duration-150 active:scale-95 hover:bg-white/20"
+            className="relative flex items-center justify-center p-2 rounded-full shadow-lg bg-black/70 backdrop-blur-md border border-white/20 hover:border-white/40 hover:bg-black/90 text-white cursor-pointer transition-all duration-200 active:scale-95 select-none"
+            style={{ WebkitTouchCallout: 'none' }}
           >
-            {isMuted ? <VolumeX className="w-5 h-5 text-white/90" /> : <Volume2 className="w-5 h-5 text-white/90" />}
+            {isMuted ? <VolumeX className="w-4 h-4 text-white/90" /> : <Volume2 className="w-4 h-4 text-white/90" />}
           </button>
         </div>
       )}

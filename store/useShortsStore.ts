@@ -1,5 +1,20 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import { Reel } from '../types/reel';
+
+// ── Quality label type ──────────────────────────────────────────────────────
+export type QualityLabel = 'auto' | '144p' | '240p' | '360p' | '480p' | '720p' | '1080p';
+
+const QUALITY_KEY = 'shorts_preferred_quality';
+function loadSavedQuality(): QualityLabel {
+  if (typeof window === 'undefined') return 'auto';
+  try {
+    const v = localStorage.getItem(QUALITY_KEY);
+    if (v && ['auto', '144p', '240p', '360p', '480p', '720p', '1080p'].includes(v)) {
+      return v as QualityLabel;
+    }
+  } catch {}
+  return 'auto';
+}
 
 interface ShortsStore {
   activeIndex: number;
@@ -16,6 +31,9 @@ interface ShortsStore {
   setIsPlaying: (playing: boolean) => void;
   toggleAutoScroll: () => void;
   setAutoScroll: (autoScroll: boolean) => void;
+
+  selectedQuality: QualityLabel;
+  setSelectedQuality: (quality: QualityLabel) => void;
 
   activeCommentReel: Reel | null;
   openComments: (reel: Reel) => void;
@@ -61,6 +79,12 @@ export const useShortsStore = create<ShortsStore>((set) => ({
   toggleAutoScroll: () => set((state) => ({ isAutoScroll: !state.isAutoScroll })),
   setAutoScroll: (autoScroll) => set({ isAutoScroll: autoScroll }),
 
+  selectedQuality: loadSavedQuality(),
+  setSelectedQuality: (quality) => {
+    try { localStorage.setItem(QUALITY_KEY, quality); } catch {}
+    set({ selectedQuality: quality });
+  },
+
   activeCommentReel: null,
   openComments: (reel) => set({ activeCommentReel: reel }),
   closeComments: () => set({ activeCommentReel: null }),
@@ -83,20 +107,13 @@ export const useShortsStore = create<ShortsStore>((set) => ({
   recordReelScrolled: (reelId: string) =>
     set((state) => {
       if (state.scrolledReelsSinceAd.includes(reelId)) return state;
-      return {
-        scrolledReelsSinceAd: [...state.scrolledReelsSinceAd, reelId],
-      };
+      return { scrolledReelsSinceAd: [...state.scrolledReelsSinceAd, reelId] };
     }),
   recordReelWatched90: (reelId: string) =>
     set((state) => {
       if (state.watched90ReelsSinceAd.includes(reelId)) return state;
-      return {
-        watched90ReelsSinceAd: [...state.watched90ReelsSinceAd, reelId],
-      };
+      return { watched90ReelsSinceAd: [...state.watched90ReelsSinceAd, reelId] };
     }),
   resetAdTrackingCounters: () =>
-    set({
-      scrolledReelsSinceAd: [],
-      watched90ReelsSinceAd: [],
-    }),
+    set({ scrolledReelsSinceAd: [], watched90ReelsSinceAd: [] }),
 }));

@@ -5,6 +5,7 @@ import Hls from 'hls.js';
 import { Volume2, VolumeX, Play, Pause, Heart, Loader2, RotateCcw, RotateCw, FastForward, Rewind } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useShortsStore } from '../../store/useShortsStore';
+import { QualitySelector, HlsLevel, heightToLabel, findBestLevelIndex } from './QualitySelector';
 
 interface VideoPlayerProps {
   src: string;
@@ -43,7 +44,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  const { isMuted, volume, isPlaying, isAutoScroll, toggleMute, togglePlayPause } = useShortsStore();
+  const { isMuted, volume, isPlaying, isAutoScroll, toggleMute, togglePlayPause, selectedQuality, setSelectedQuality } = useShortsStore();
+
+  // ── HLS Quality level state ───────────────────────────────────────────────
+  const [availableLevels, setAvailableLevels] = useState<HlsLevel[]>([]);
+  const [autoLevelIndex, setAutoLevelIndex] = useState<number>(-1);
 
   const [isLoading, setIsLoading] = useState(false);
   const [showHeartBurst, setShowHeartBurst] = useState(false);
@@ -319,7 +324,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
 
       const hls = new Hls({
-        startLevel: 0,
+        startLevel: -1,        // Let ABR pick initially; we override below after manifest
         autoStartLoad: true,
         abrEwmaDefaultEstimate: 400000,
         abrBandWidthFactor: 0.8,
@@ -330,7 +335,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         backBufferLength: 2,
         enableWorker: true,
         lowLatencyMode: true,
-        capLevelToPlayerSize: true,
+        capLevelToPlayerSize: false,
         fragLoadingMaxRetry: 4,
         fragLoadingRetryDelay: 500,
         levelLoadingMaxRetry: 3,
@@ -340,8 +345,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       hls.loadSource(src);
       hls.attachMedia(video);
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
         handlePlaying();
+
+        // Build level list for the quality selector
+        const levels: HlsLevel[] = hls.levels.map((l, i) => ({
+          height: l.height || 0,
+          width: l.width || 0,
+          bitrate: l.bitrate || 0,
+          index: i,
+        }));
+        setAvailableLevels(levels);
+
+        // Apply saved quality preference
+        const saved = useShortsStore.getState().selectedQuality;
+        if (saved !== 'auto') {
+          hls.currentLevel = findBestLevelIndex(levels, saved);
+        } else {
+          hls.currentLevel = -1; // full ABR
+        }
+
         if (isActiveRef.current && isPlayingRef.current) {
           const playPromise = video.play();
           if (playPromise !== undefined) {
@@ -356,6 +379,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       });
 
+      // Track which level HLS.js is currently switched to
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+        setAutoLevelIndex(data.level);
+      });
       hls.on(Hls.Events.FRAG_LOADED, () => {
         handlePlaying();
       });
@@ -409,8 +436,56 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+      setAvailableLevels([]);
+      setAutoLevelIndex(-1);
     };
   }, [src, youtubeId]);
+
+  // ── Quality change handler (Instant YouTube-style buffer flush & reload) ─
+  const handleQualityChange = useCallback((levelIndex: number, label: import('../../store/useShortsStore').QualityLabel) => {
+    setSelectedQuality(label);
+    const hls = hlsRef.current;
+    const video = videoRef.current;
+
+    if (!hls || !video) return;
+
+    // Show brief buffering spinner while switching stream, just like YouTube
+    setIsLoading(true);
+
+    if (levelIndex === -1) {
+      // Re-enable full ABR
+      hls.currentLevel = -1;
+      setAutoLevelIndex(-1);
+    } else {
+      // Force immediate level lock
+      hls.currentLevel = levelIndex;
+      hls.loadLevel = levelIndex;
+      setAutoLevelIndex(levelIndex);
+    }
+
+    // Flush forward buffer and immediately fetch new quality segments from currentTime
+    const currentTime = video.currentTime;
+    try {
+      hls.stopLoad();
+      hls.startLoad(currentTime);
+      // Small time nudge forces MediaSource to purge forward buffer and read new quality
+      video.currentTime = currentTime;
+    } catch (err) {
+      console.warn('[VideoPlayer] Error restarting stream load on quality change:', err);
+    }
+
+    // Clear loader once the new fragment has been parsed & buffered
+    const handleFragLoaded = () => {
+      setIsLoading(false);
+      hls.off(Hls.Events.FRAG_BUFFERED, handleFragLoaded);
+    };
+    hls.once(Hls.Events.FRAG_BUFFERED, handleFragLoaded);
+
+    // Fallback timer so spinner never gets stuck
+    setTimeout(() => {
+      setIsLoading(false);
+    }, 1000);
+  }, [setSelectedQuality]);
 
   useEffect(() => {
     if (youtubeId) return;
@@ -966,17 +1041,43 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       </AnimatePresence>
 
       {isActive && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleMute();
-          }}
-          aria-label={isMuted ? 'Unmute video' : 'Mute video'}
-          title={isMuted ? 'Unmute' : 'Mute'}
-          className="absolute top-4 right-4 z-20 p-2.5 rounded-full glass-button text-white shadow-lg cursor-pointer transition-transform duration-150 active:scale-95 hover:bg-white/20"
+        <div
+          className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2"
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
         >
-          {isMuted ? <VolumeX className="w-5 h-5 text-white/90" /> : <Volume2 className="w-5 h-5 text-white/90" />}
-        </button>
+          {/* Quality selector — only shown for HLS videos */}
+          {!youtubeId && (
+            <QualitySelector
+              availableLevels={availableLevels}
+              autoLevelIndex={autoLevelIndex}
+              isYouTube={false}
+              onQualityChange={handleQualityChange}
+            />
+          )}
+          {youtubeId && (
+            <QualitySelector
+              availableLevels={[]}
+              autoLevelIndex={-1}
+              isYouTube
+              onQualityChange={() => {}}
+            />
+          )}
+
+          {/* Mute button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMute();
+            }}
+            aria-label={isMuted ? 'Unmute video' : 'Mute video'}
+            title={isMuted ? 'Unmute' : 'Mute'}
+            className="p-2.5 rounded-full glass-button text-white shadow-lg cursor-pointer transition-transform duration-150 active:scale-95 hover:bg-white/20"
+          >
+            {isMuted ? <VolumeX className="w-5 h-5 text-white/90" /> : <Volume2 className="w-5 h-5 text-white/90" />}
+          </button>
+        </div>
       )}
     </div>
   );

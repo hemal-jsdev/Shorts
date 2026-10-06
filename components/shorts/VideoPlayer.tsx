@@ -19,6 +19,7 @@ interface VideoPlayerProps {
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   onDoubleTapLike?: () => void;
   onEnded?: () => void;
+  onBufferingChange?: (isBuffering: boolean) => void;
 }
 
 function extractYouTubeId(url: string): string | null {
@@ -39,6 +40,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onTimeUpdate,
   onDoubleTapLike,
   onEnded,
+  onBufferingChange,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -49,6 +51,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // ── HLS Quality level state ───────────────────────────────────────────────
   const [availableLevels, setAvailableLevels] = useState<HlsLevel[]>([]);
   const [autoLevelIndex, setAutoLevelIndex] = useState<number>(-1);
+  const [isSwitchingQuality, setIsSwitchingQuality] = useState(false);
+  const isSwitchingQualityRef = useRef(false);
+  const [switchingLabel, setSwitchingLabel] = useState<string>('');
+  const [qualityToast, setQualityToast] = useState<{ text: string; label: string } | null>(null);
+  const qualityToastTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [showHeartBurst, setShowHeartBurst] = useState(false);
@@ -102,8 +109,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       clearTimeout(waitingTimerRef.current);
       waitingTimerRef.current = null;
     }
-    setIsLoading(false);
+    if (!isSwitchingQualityRef.current) {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    onBufferingChange?.(isLoading || isSwitchingQuality);
+  }, [isLoading, isSwitchingQuality, onBufferingChange]);
 
   const [flashIcon, setFlashIcon] = useState<'play' | 'pause' | null>(null);
   const flashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -177,6 +190,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       if (seekAccumulatorRef.current.timer) {
         clearTimeout(seekAccumulatorRef.current.timer);
+      }
+      if (qualityToastTimerRef.current) {
+        clearTimeout(qualityToastTimerRef.current);
       }
     };
   }, []);
@@ -441,51 +457,126 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [src, youtubeId]);
 
-  // ── Quality change handler (Instant YouTube-style buffer flush & reload) ─
-  const handleQualityChange = useCallback((levelIndex: number, label: import('../../store/useShortsStore').QualityLabel) => {
-    setSelectedQuality(label);
-    const hls = hlsRef.current;
-    const video = videoRef.current;
+  // ── Quality change handler — YouTube-grade buffered stream level switch ───
+  const handleQualityChange = useCallback(
+    (levelIndex: number, label: import('../../store/useShortsStore').QualityLabel) => {
+      setSelectedQuality(label);
+      const hls = hlsRef.current;
+      const video = videoRef.current;
+      if (!hls || !video) return;
 
-    if (!hls || !video) return;
+      const labelText = label === 'auto' ? 'Auto' : label;
+      setSwitchingLabel(labelText);
+      setIsSwitchingQuality(true);
+      isSwitchingQualityRef.current = true;
+      setIsLoading(true);
 
-    // Show brief buffering spinner while switching stream, just like YouTube
-    setIsLoading(true);
+      // Notify parent component to freeze progress bar in ShortItem
+      onBufferingChange?.(true);
 
-    if (levelIndex === -1) {
-      // Re-enable full ABR
-      hls.currentLevel = -1;
-      setAutoLevelIndex(-1);
-    } else {
-      // Force immediate level lock
-      hls.currentLevel = levelIndex;
-      hls.loadLevel = levelIndex;
-      setAutoLevelIndex(levelIndex);
-    }
+      // Trigger toast feedback
+      if (qualityToastTimerRef.current) {
+        clearTimeout(qualityToastTimerRef.current);
+      }
+      setQualityToast({
+        text: `Quality set to ${labelText}`,
+        label: labelText,
+      });
+      qualityToastTimerRef.current = setTimeout(() => {
+        setQualityToast(null);
+        qualityToastTimerRef.current = null;
+      }, 2500);
 
-    // Flush forward buffer and immediately fetch new quality segments from currentTime
-    const currentTime = video.currentTime;
-    try {
-      hls.stopLoad();
-      hls.startLoad(currentTime);
-      // Small time nudge forces MediaSource to purge forward buffer and read new quality
-      video.currentTime = currentTime;
-    } catch (err) {
-      console.warn('[VideoPlayer] Error restarting stream load on quality change:', err);
-    }
+      // Snapshot playback state before switching
+      const wasPaused = video.paused;
+      const switchStartTime = Date.now();
 
-    // Clear loader once the new fragment has been parsed & buffered
-    const handleFragLoaded = () => {
-      setIsLoading(false);
-      hls.off(Hls.Events.FRAG_BUFFERED, handleFragLoaded);
-    };
-    hls.once(Hls.Events.FRAG_BUFFERED, handleFragLoaded);
+      // ── Step 1: Explicitly pause the video ──────────────────────────────
+      // Stopping playback eliminates audio crackle, dropped frames, and lagging.
+      video.pause();
 
-    // Fallback timer so spinner never gets stuck
-    setTimeout(() => {
-      setIsLoading(false);
-    }, 1000);
-  }, [setSelectedQuality]);
+      // ── Step 2: Lock quality level in HLS.js ──────────────────────────────
+      if (levelIndex === -1) {
+        hls.currentLevel = -1;
+        hls.loadLevel = -1;
+        hls.nextLevel = -1;
+        setAutoLevelIndex(-1);
+      } else {
+        hls.currentLevel = levelIndex;
+        hls.loadLevel = levelIndex;
+        hls.nextLevel = levelIndex;
+        setAutoLevelIndex(levelIndex);
+      }
+
+      // ── Step 3: Wait until the new rendition is downloaded & buffered ───
+      let isDone = false;
+
+      const cleanup = () => {
+        hls.off(Hls.Events.FRAG_BUFFERED, onFragBuffered);
+        hls.off(Hls.Events.LEVEL_SWITCHED, onLevelSwitched);
+      };
+
+      const finishSwitch = () => {
+        if (isDone) return;
+        isDone = true;
+        cleanup();
+
+        // Enforce at least 500ms display time so the user can clearly see what is happening
+        const elapsed = Date.now() - switchStartTime;
+        const remainingDelay = Math.max(0, 500 - elapsed);
+
+        setTimeout(() => {
+          isSwitchingQualityRef.current = false;
+          setIsSwitchingQuality(false);
+          setIsLoading(false);
+          onBufferingChange?.(false);
+
+          // Resume playback smoothly once buffer is filled
+          if (!wasPaused && videoRef.current) {
+            videoRef.current.play().catch(() => {});
+          }
+        }, remainingDelay);
+      };
+
+      const onFragBuffered = (_: any, data: any) => {
+        // If a specific level was requested, make sure this fragment belongs to that level
+        if (levelIndex !== -1 && data?.frag?.level !== undefined && data.frag.level !== levelIndex) {
+          return; // Ignore stale fragment from the previous quality level
+        }
+
+        // Check if forward buffer has data ahead of current position
+        const ct = video.currentTime;
+        let hasBufferAhead = false;
+        for (let i = 0; i < video.buffered.length; i++) {
+          if (video.buffered.start(i) <= ct + 0.1 && video.buffered.end(i) >= ct + 0.3) {
+            hasBufferAhead = true;
+            break;
+          }
+        }
+
+        if (hasBufferAhead || video.readyState >= 3) {
+          finishSwitch();
+        }
+      };
+
+      const onLevelSwitched = (_: any, data: any) => {
+        if (levelIndex === -1 || data?.level === levelIndex) {
+          finishSwitch();
+        }
+      };
+
+      hls.on(Hls.Events.FRAG_BUFFERED, onFragBuffered);
+      hls.on(Hls.Events.LEVEL_SWITCHED, onLevelSwitched);
+
+      // Safety fallback timer: resume after 3.5s in case of slow network or missing event
+      setTimeout(() => {
+        if (!isDone) {
+          finishSwitch();
+        }
+      }, 3500);
+    },
+    [setSelectedQuality, onBufferingChange],
+  );
 
   useEffect(() => {
     if (youtubeId) return;
@@ -495,7 +586,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (isActive) {
       video.muted = isMuted;
       video.volume = isMuted ? 0 : volume;
-      if (isPlaying && !isPausedByAd) {
+      if (isPlaying && !isPausedByAd && !isSwitchingQualityRef.current) {
         const playPromise = video.play();
         if (playPromise !== undefined) {
           playPromise
@@ -506,7 +597,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               handlePlaying();
             });
         }
-      } else {
+      } else if (!isSwitchingQualityRef.current) {
         video.pause();
       }
     } else {
@@ -864,7 +955,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           onPlaying={handlePlaying}
           onEnded={triggerAutoAdvance}
           onTimeUpdate={() => {
-            if (videoRef.current && isActive && !isPausedByAd) {
+            if (videoRef.current && isActive && !isPausedByAd && !isSwitchingQualityRef.current) {
               const cur = videoRef.current.currentTime;
               const dur = videoRef.current.duration || 0;
               if (onTimeUpdate) {
@@ -1010,17 +1101,40 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       </AnimatePresence>
 
       <AnimatePresence>
-        {isActive && isLoading && (
+        {isActive && (isLoading || isSwitchingQuality) && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
+            initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            transition={{ duration: 0.15 }}
-            className="absolute inset-0 flex items-center justify-center pointer-events-none z-20"
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.2 }}
+            className="absolute inset-0 flex items-center justify-center pointer-events-none z-30"
           >
-            <div className="w-12 h-12 rounded-full bg-black/50 backdrop-blur-sm border border-white/20 flex items-center justify-center shadow-[0_4px_24px_rgba(0,0,0,0.5)]">
-              <Loader2 className="w-6 h-6 text-white animate-spin" />
-            </div>
+            {isSwitchingQuality && switchingLabel ? (
+              <motion.div
+                initial={{ scale: 0.88, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.88, opacity: 0 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+                className="flex flex-col items-center gap-3 px-6 py-4 rounded-2xl bg-black/80 backdrop-blur-xl border border-white/20 shadow-[0_12px_40px_rgba(0,0,0,0.8)]"
+              >
+                <div className="relative flex items-center justify-center w-10 h-10">
+                  <div className="w-10 h-10 rounded-full border-2 border-white/15 border-t-red-500 animate-spin" />
+                  <Loader2 className="w-5 h-5 text-white/90 animate-spin absolute" />
+                </div>
+                <div className="flex flex-col items-center gap-0.5">
+                  <span className="text-white text-sm font-semibold tracking-wide">
+                    Switching to {switchingLabel}
+                  </span>
+                  <span className="text-white/50 text-[11px] font-medium tracking-wide">
+                    Buffering stream...
+                  </span>
+                </div>
+              </motion.div>
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
+                <Loader2 className="w-6 h-6 text-white animate-spin" />
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1040,6 +1154,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
       </AnimatePresence>
 
+      {/* YouTube-style Quality switch toast notification */}
+      <AnimatePresence>
+        {isActive && qualityToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -24, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -16, scale: 0.92 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 400 }}
+            className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/85 backdrop-blur-xl border border-white/20 shadow-[0_8px_32px_rgba(0,0,0,0.65)]"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)] animate-pulse" />
+            <span className="text-white text-xs font-semibold tracking-wide">
+              {qualityToast.text}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {isActive && (
         <div
           className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2"
@@ -1053,6 +1185,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               availableLevels={availableLevels}
               autoLevelIndex={autoLevelIndex}
               isYouTube={false}
+              isSwitching={isSwitchingQuality}
               onQualityChange={handleQualityChange}
             />
           )}
@@ -1061,6 +1194,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               availableLevels={[]}
               autoLevelIndex={-1}
               isYouTube
+              isSwitching={false}
               onQualityChange={() => {}}
             />
           )}

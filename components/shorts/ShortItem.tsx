@@ -58,6 +58,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
   const [seekTime, setSeekTime] = useState<number | null>(null);
   const [viewLogged, setViewLogged] = useState(false);
   const [reached90Logged, setReached90Logged] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
 
   const adCuepoints = React.useMemo(() => {
     if (!ads || ads.length === 0) return [];
@@ -78,6 +79,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
     setSeekTime(null);
     setViewLogged(false);
     setReached90Logged(false);
+    setIsBuffering(false);
     setActiveMidroll(null);
     completedCuesRef.current.clear();
     isSeekingRef.current = false;
@@ -103,6 +105,8 @@ export const ShortItem: React.FC<ShortItemProps> = ({
   };
 
   const handleTimeUpdate = (time: number, totalDuration: number) => {
+    // Freeze progress bar when stream is buffering / switching resolution
+    if (isBuffering) return;
     setCurrentTime(time);
     if (totalDuration > 0) setDuration(totalDuration);
 
@@ -125,7 +129,8 @@ export const ShortItem: React.FC<ShortItemProps> = ({
       }
     }
 
-    // Trigger In-Video Mid-Roll Ad when reaching or passing any uncompleted cuepoint
+    // [TESTING] In-video midroll ad trigger temporarily commented out for testing
+    /*
     if (
       isActive &&
       totalDuration >= 6 &&
@@ -152,6 +157,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
         }
       }
     }
+    */
   };
 
   const handleEnded = () => {
@@ -246,6 +252,7 @@ export const ShortItem: React.FC<ShortItemProps> = ({
             onTimeUpdate={handleTimeUpdate}
             onDoubleTapLike={handleToggleLike}
             onEnded={handleEnded}
+            onBufferingChange={setIsBuffering}
           />
         ) : (
           <div className="relative w-full h-full bg-black flex items-center justify-center overflow-hidden">
@@ -264,27 +271,27 @@ export const ShortItem: React.FC<ShortItemProps> = ({
           </div>
         )}
 
-        {activeMidroll ? (
+        {/* [TESTING] In-video midroll ad overlay temporarily commented out for testing */}
+        {/* activeMidroll ? (
           <InVideoAdOverlay
             ad={activeMidroll.ad}
             durationSeconds={10}
             canSkipAfter={10}
             onComplete={handleAdComplete}
           />
-        ) : (
-          <>
-            <VideoOverlay reel={reel} />
+        ) : null */}
 
-            <ProgressBar
-              currentTime={currentTime}
-              duration={duration}
-              adCuepoints={adCuepoints.length > 0 ? adCuepoints : undefined}
-              onSeek={handleSeek}
-              onSeekStart={handleSeekStart}
-              onSeekEnd={handleSeekEnd}
-            />
-          </>
-        )}
+        <VideoOverlay reel={reel} />
+
+        <ProgressBar
+          currentTime={currentTime}
+          duration={duration}
+          // adCuepoints={adCuepoints.length > 0 ? adCuepoints : undefined}
+          onSeek={handleSeek}
+          onSeekStart={handleSeekStart}
+          onSeekEnd={handleSeekEnd}
+          isBuffering={isBuffering}
+        />
       </div>
     </div>
   );

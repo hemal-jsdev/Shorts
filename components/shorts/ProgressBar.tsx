@@ -13,6 +13,7 @@ interface ProgressBarProps {
   disabled?: boolean;
   isAd?: boolean;
   showTime?: boolean;
+  isBuffering?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -32,6 +33,7 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   disabled = false,
   isAd = false,
   showTime = false,
+  isBuffering = false,
 }) => {
   const barRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -130,14 +132,19 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
             isAd
               ? 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.95)] duration-100 ease-linear'
               : 'bg-gradient-to-r from-red-600 to-red-500 duration-75 shadow-[0_0_12px_rgba(239,68,68,0.9)]'
-          }`}
+          } ${isBuffering ? 'animate-pulse' : ''}`}
           style={{ width: `${percentage}%` }}
         >
+          {isBuffering && (
+            <div className="absolute inset-0 bg-white/30 animate-pulse pointer-events-none rounded-r-full" />
+          )}
           {!isAd && !disabled && onSeek && (
             <div
               className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 rounded-full bg-red-600 ring-2 ring-white shadow-lg transition-transform duration-150 ${
                 isDragging
                   ? 'w-4 h-4 scale-125 opacity-100'
+                  : isBuffering
+                  ? 'w-2.5 h-2.5 opacity-90 animate-ping'
                   : 'w-3 h-3 opacity-0 group-hover:opacity-100'
               }`}
             />

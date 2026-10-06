@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, Check } from 'lucide-react';
+import { Settings, Check, Sliders, X } from 'lucide-react';
 import { useShortsStore, QualityLabel } from '../../store/useShortsStore';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -22,6 +22,8 @@ interface QualitySelectorProps {
   autoLevelIndex: number;
   /** Whether this is a YouTube-sourced video (quality not controllable) */
   isYouTube?: boolean;
+  /** Whether a quality switch is currently buffering/in progress */
+  isSwitching?: boolean;
   /** Callback when user picks a quality — passes HLS level index or -1 for auto */
   onQualityChange: (levelIndex: number, label: QualityLabel) => void;
 }
@@ -98,6 +100,7 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
   availableLevels,
   autoLevelIndex,
   isYouTube = false,
+  isSwitching = false,
   onQualityChange,
 }) => {
   const { selectedQuality, setSelectedQuality } = useShortsStore();
@@ -136,19 +139,27 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
     [availableLevels, setSelectedQuality, onQualityChange]
   );
 
-  // Determine current auto-resolved label for display
-  const autoResolvedLabel =
-    autoLevelIndex >= 0 && availableLevels[autoLevelIndex]
-      ? resolutionToLabel(getLevelResolution(availableLevels[autoLevelIndex]))
-      : null;
+  // Determine current auto-resolved level for display
+  const matchedAutoLevel = autoLevelIndex >= 0 ? availableLevels.find((l) => l.index === autoLevelIndex) : null;
+  const autoResolvedLabel = matchedAutoLevel ? resolutionToLabel(getLevelResolution(matchedAutoLevel)) : null;
+
+  // Effective quality currently active on this video (ensures checkmark is never on an unavailable resolution)
+  const effectiveQuality = (() => {
+    if (selectedQuality === 'auto') return 'auto';
+    const isSupported = availableLevels.some(
+      (l) => resolutionToLabel(getLevelResolution(l)) === selectedQuality
+    );
+    if (isSupported) return selectedQuality;
+    const bestIdx = findBestLevelIndex(availableLevels, selectedQuality);
+    const matched = availableLevels.find((l) => l.index === bestIdx);
+    return matched ? resolutionToLabel(getLevelResolution(matched)) : 'auto';
+  })();
 
   // What label to show on the top-right pill badge
   const badgeLabel =
     selectedQuality === 'auto'
-      ? autoResolvedLabel
-        ? autoResolvedLabel
-        : 'Auto'
-      : selectedQuality;
+      ? autoResolvedLabel ?? 'Auto'
+      : effectiveQuality;
 
   if (availableLevels.length === 0 && !isYouTube) return null;
 
@@ -161,7 +172,7 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
-          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 select-none"
+          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 backdrop-blur-md p-4 select-none"
           onClick={(e) => {
             e.stopPropagation();
             setOpen(false);
@@ -169,57 +180,125 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
           onPointerDown={(e) => e.stopPropagation()}
           onPointerUp={(e) => e.stopPropagation()}
         >
-          {/* Centered Modal Card with Options Only */}
+          {/* Centered Modal Card */}
           <motion.div
             key="quality-modal-card"
             ref={modalRef}
-            initial={{ opacity: 0, scale: 0.94 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.94 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 400 }}
-            className="w-64 max-w-[85vw] bg-[#16171d]/95 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.85)] p-2 flex flex-col gap-1 overflow-hidden"
+            initial={{ opacity: 0, scale: 0.94, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.94, y: 10 }}
+            transition={{ type: 'spring', damping: 26, stiffness: 400 }}
+            className="w-[280px] max-w-[88vw] bg-[#121319]/95 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-[0_24px_70px_rgba(0,0,0,0.85)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
             onPointerUp={(e) => e.stopPropagation()}
           >
-            {/* Auto Option */}
-            <button
-              type="button"
-              onClick={() => handleSelect('auto')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm transition-colors text-left cursor-pointer ${
-                selectedQuality === 'auto'
-                  ? 'bg-white/15 text-white font-semibold'
-                  : 'text-white/80 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <span>Auto</span>
-              {selectedQuality === 'auto' && (
-                <Check className="w-4 h-4 text-white stroke-[2.5]" />
-              )}
-            </button>
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-4 pt-3.5 pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-3.5 h-3.5 text-white/60" />
+                <div>
+                  <h3 className="text-white text-xs font-semibold tracking-wide uppercase">
+                    Quality
+                  </h3>
+                  <p className="text-white/40 text-[10px] leading-tight">
+                    {isYouTube
+                      ? 'Managed by YouTube'
+                      : selectedQuality === 'auto'
+                      ? autoResolvedLabel
+                        ? `Auto • ${autoResolvedLabel}`
+                        : 'Auto'
+                      : effectiveQuality}
+                  </p>
+                </div>
+              </div>
 
-            {/* Standard Resolution Options: 1080p, 720p, 480p, 360p, 240p, 144p */}
-            {STANDARD_QUALITIES.map((label) => {
-              const isSelected = selectedQuality === label;
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-6 h-6 rounded-full bg-white/5 hover:bg-white/15 text-white/60 hover:text-white flex items-center justify-center transition-all cursor-pointer"
+                title="Close"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => handleSelect(label)}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm transition-colors text-left cursor-pointer ${
-                    isSelected
-                      ? 'bg-white/15 text-white font-semibold'
-                      : 'text-white/80 hover:bg-white/10 hover:text-white'
-                  }`}
-                >
-                  <span>{label}</span>
-                  {isSelected && (
-                    <Check className="w-4 h-4 text-white stroke-[2.5]" />
-                  )}
-                </button>
-              );
-            })}
+            {/* Modal Options Body */}
+            <div className="p-2 flex flex-col gap-0.5 max-h-[60vh] overflow-y-auto">
+              {/* Auto Option */}
+              <button
+                type="button"
+                onClick={() => handleSelect('auto')}
+                disabled={isYouTube}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-all duration-150 ${
+                  isYouTube
+                    ? 'opacity-40 cursor-not-allowed text-white/40'
+                    : selectedQuality === 'auto'
+                    ? 'bg-white/15 text-white font-semibold cursor-pointer'
+                    : 'text-white/80 hover:bg-white/10 hover:text-white cursor-pointer'
+                }`}
+              >
+                <div className="flex flex-col">
+                  <span className="text-sm">Auto</span>
+                  <span className="text-[10px] text-white/40">
+                    {autoResolvedLabel
+                      ? `Adjusts to connection • Currently ${autoResolvedLabel}`
+                      : 'Adjusts automatically to connection'}
+                  </span>
+                </div>
+                {selectedQuality === 'auto' && (
+                  <Check className="w-4 h-4 text-white stroke-[2.5] flex-shrink-0" />
+                )}
+              </button>
+
+              {/* Subtle Divider */}
+              <div className="mx-2 my-1 h-px bg-white/10" />
+
+              {/* Standard Resolution Options */}
+              {STANDARD_QUALITIES.map((label) => {
+                // An option is suitable/available only if it exists in the active video's manifest
+                const isSupported =
+                  !isYouTube &&
+                  availableLevels.some(
+                    (l) => resolutionToLabel(getLevelResolution(l)) === label
+                  );
+
+                const isSelected = isSupported && effectiveQuality === label;
+
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => {
+                      if (isSupported) {
+                        handleSelect(label);
+                      }
+                    }}
+                    disabled={!isSupported || isYouTube}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left transition-all duration-150 ${
+                      !isSupported || isYouTube
+                        ? 'opacity-25 cursor-not-allowed text-white/30'
+                        : isSelected
+                        ? 'bg-white/15 text-white font-semibold cursor-pointer'
+                        : 'text-white/80 hover:bg-white/10 hover:text-white cursor-pointer'
+                    }`}
+                  >
+                    <span className="text-sm">{label}</span>
+
+                    <div className="flex items-center gap-1.5">
+                      {!isSupported && !isYouTube && (
+                        <span className="text-[10px] text-white/30">
+                          Unavailable
+                        </span>
+                      )}
+                      {isSelected && (
+                        <Check className="w-4 h-4 text-white stroke-[2.5] flex-shrink-0" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </motion.div>
         </motion.div>
       )}
@@ -232,7 +311,7 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
       <button
         type="button"
         aria-label="Video quality settings"
-        title={isYouTube ? 'Quality managed by YouTube' : 'Change video quality'}
+        title={isYouTube ? 'Quality managed by YouTube' : `Video quality: ${badgeLabel}`}
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
@@ -247,21 +326,55 @@ export const QualitySelector: React.FC<QualitySelectorProps> = ({
           e.stopPropagation();
         }}
         className={[
-          'relative flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow-lg',
-          'bg-black/70 backdrop-blur-md border transition-all duration-200 select-none',
+          'relative flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow-[0_4px_16px_rgba(0,0,0,0.5)]',
+          'bg-black/75 backdrop-blur-md border transition-all duration-200 select-none group',
           isYouTube
             ? 'border-white/10 opacity-40 cursor-not-allowed'
-            : 'border-white/20 hover:border-white/40 hover:bg-black/90 cursor-pointer active:scale-95',
+            : isSwitching
+            ? 'border-emerald-400/60 bg-emerald-950/40 text-emerald-200 cursor-pointer'
+            : 'border-white/20 hover:border-white/40 hover:bg-black/90 cursor-pointer',
         ].join(' ')}
         style={{ WebkitTouchCallout: 'none' }}
       >
-        <Settings className="w-3.5 h-3.5 text-white/85" />
-        <span
-          className="text-white font-semibold leading-none"
-          style={{ fontSize: 11 }}
+        {/* Gear icon with switching spin animation */}
+        <motion.div
+          animate={isSwitching ? { rotate: 360 } : { rotate: 0 }}
+          transition={
+            isSwitching
+              ? { repeat: Infinity, ease: 'linear', duration: 1.2 }
+              : { duration: 0.2 }
+          }
+          className="flex items-center justify-center"
         >
-          {badgeLabel}
-        </span>
+          <Settings
+            className={`w-3.5 h-3.5 transition-colors ${
+              isSwitching
+                ? 'text-emerald-400'
+                : 'text-white/85 group-hover:text-white'
+            }`}
+          />
+        </motion.div>
+
+        {/* Animated label transition */}
+        <AnimatePresence mode="wait">
+          <motion.span
+            key={badgeLabel}
+            initial={{ opacity: 0, y: 2 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -2 }}
+            transition={{ duration: 0.15 }}
+            className={`font-semibold leading-none text-[11px] ${
+              isSwitching ? 'text-emerald-300' : 'text-white'
+            }`}
+          >
+            {badgeLabel}
+          </motion.span>
+        </AnimatePresence>
+
+        {/* Subtle switching pulse dot */}
+        {isSwitching && (
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping absolute -top-0.5 -right-0.5" />
+        )}
       </button>
 
       {/* ── Render Popup Modal at Center of Screen ── */}

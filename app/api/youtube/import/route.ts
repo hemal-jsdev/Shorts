@@ -65,6 +65,7 @@ async function readStreamToBuffer(stream: any): Promise<Buffer> {
 }
 
 import { Innertube, Platform, ClientType } from 'youtubei.js';
+import { downloadAndMuxYouTube } from '@/lib/video-muxer';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -184,54 +185,70 @@ export async function POST(req: Request) {
     let fallbackNotice: string | null = null;
 
     try {
-      console.log(`[YouTube Import] 📥 Downloading stream for ID: ${videoId}...`);
+      console.log(`[YouTube Import] 📥 Downloading & muxing 1080p Full HD stream for ID: ${videoId}...`);
       let videoBuffer: Buffer | null = null;
-      let lastDownloadErr: any = null; // Multiple clients to maximize resilience against YouTube datacenter bot protection
+      let lastDownloadErr: any = null;
 
-      const clientCandidates = [
-        ClientType.MWEB,
-        ClientType.TV_EMBEDDED,
-        ClientType.ANDROID,
-        ClientType.WEB,
-      ];
+      // Primary: High-Definition 1080p adaptive stream download & FFmpeg muxing
+      try {
+        const muxResult = await downloadAndMuxYouTube(videoId, {
+          targetResolution: '1080p',
+          cookie: getYouTubeCookie(),
+        });
+        videoBuffer = muxResult.buffer;
+        detectedQuality = '1080p Full HD';
+        if (muxResult.title && !customCaption.trim()) rawTitle = muxResult.title;
+        if (muxResult.author && !customAuthorName.trim()) channelName = muxResult.author;
+        if (muxResult.durationSeconds) durationSeconds = muxResult.durationSeconds;
+        console.log(`[YouTube Import] ✅ Successfully created 1080p master file (${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB)`);
+      } catch (muxErr: any) {
+        console.warn('[YouTube Import] High-resolution muxing failed, falling back to progressive stream candidates:', muxErr?.message);
+        lastDownloadErr = muxErr;
 
-      for (const clientType of clientCandidates) {
-        try {
-          const ytCookie = getYouTubeCookie();
-          const yt = await Innertube.create({
-            client_type: clientType,
-            generate_session_locally: true,
-            ...(ytCookie ? { cookie: ytCookie } : {}),
-          });
+        const clientCandidates = [
+          ClientType.IOS,
+          ClientType.ANDROID,
+          ClientType.MWEB,
+          ClientType.TV_EMBEDDED,
+          ClientType.WEB,
+        ];
 
-          // Attempt to enrich duration / quality from basic info if permitted
+        for (const clientType of clientCandidates) {
           try {
-            const info = await yt.getBasicInfo(videoId);
-            const basic = info.basic_info;
-            if (basic) {
-              rawTitle = customCaption.trim() || basic.title || rawTitle;
-              channelName = customAuthorName.trim() || basic.author || channelName;
-              durationSeconds = basic.duration || durationSeconds;
-              thumbnailUrl = customThumbnail.trim() || basic.thumbnail?.[0]?.url || thumbnailUrl;
+            const ytCookie = getYouTubeCookie();
+            const yt = await Innertube.create({
+              client_type: clientType,
+              generate_session_locally: true,
+              ...(ytCookie ? { cookie: ytCookie } : {}),
+            });
+
+            // Attempt to enrich duration / quality from basic info if permitted
+            try {
+              const info = await yt.getBasicInfo(videoId);
+              const basic = info.basic_info;
+              if (basic) {
+                rawTitle = customCaption.trim() || basic.title || rawTitle;
+                channelName = customAuthorName.trim() || basic.author || channelName;
+                durationSeconds = basic.duration || durationSeconds;
+                thumbnailUrl = customThumbnail.trim() || basic.thumbnail?.[0]?.url || thumbnailUrl;
+              }
+            } catch (_) {}
+
+            const stream = await yt.download(videoId, {
+              type: 'video+audio',
+              quality: 'best',
+              format: 'any',
+            });
+
+            videoBuffer = await readStreamToBuffer(stream);
+            if (videoBuffer && videoBuffer.length > 0) {
+              console.log(`[YouTube Import] ✅ Successfully downloaded fallback stream via ${clientType} (${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB)`);
+              break;
             }
-          } catch (_) {
-            // Ignore basic info restriction; oEmbed metadata is already set
+          } catch (err: any) {
+            console.warn(`[YouTube Import] Client ${clientType} download attempt failed:`, err?.message);
+            lastDownloadErr = err;
           }
-
-          const stream = await yt.download(videoId, {
-            type: 'video+audio',
-            quality: 'best',
-            format: 'any',
-          });
-
-          videoBuffer = await readStreamToBuffer(stream);
-          if (videoBuffer && videoBuffer.length > 0) {
-            console.log(`[YouTube Import] ✅ Successfully downloaded via client ${clientType} (${(videoBuffer.length / (1024 * 1024)).toFixed(2)} MB)`);
-            break;
-          }
-        } catch (err: any) {
-          console.warn(`[YouTube Import] Client ${clientType} download attempt failed:`, err?.message);
-          lastDownloadErr = err;
         }
       }
 

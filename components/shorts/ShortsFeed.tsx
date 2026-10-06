@@ -67,6 +67,8 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
     }
   }, [feedItems, recordReelScrolled]);
 
+  // [TESTING] Feed ad injection temporarily commented out for testing
+  /*
   useEffect(() => {
     if (!ads.length || !feedItems.length) return;
 
@@ -100,6 +102,7 @@ export const ShortsFeed: React.FC<ShortsFeedProps> = ({ initialReels, initialCur
     ads,
     feedItems.length,
   ]);
+  */
 
   const handleWatchProgress = useCallback(
     (reelId: string, fraction: number) => {
